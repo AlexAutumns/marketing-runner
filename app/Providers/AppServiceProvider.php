@@ -3,8 +3,10 @@
 namespace App\Providers;
 
 use App\Contracts\MarketingMailer;
+use App\Contracts\MarketingStorage;
 use App\Services\Mail\LaravelSmtpMarketingMailer;
 use App\Services\Mail\LogMarketingMailer;
+use App\Services\Storage\DemoSqliteMarketingStorage;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -20,6 +22,10 @@ class AppServiceProvider extends ServiceProvider
             return $mode === 'smtp'
                 ? new LaravelSmtpMarketingMailer
                 : new LogMarketingMailer;
+        });
+
+        $this->app->bind(MarketingStorage::class, function () {
+            return new DemoSqliteMarketingStorage;
         });
     }
 

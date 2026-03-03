@@ -13,64 +13,78 @@ class RunMarketingWorkflow extends Command
 
     protected $description = 'Runs the demo marketing workflow: send -> wait -> resend unless complied';
 
-    public function handle(MarketingMailer $mailer): int
+    // OLD handle method before refactor to use MarketingWorkflowEngine service class. Keeping here for reference until we verify new implementation works as expected.
+    // public function handle(MarketingMailer $mailer): int
+    // {
+    //     $windowMinutes = (int) $this->option('minutes');
+    //     $maxAttempts = (int) $this->option('maxAttempts');
+
+    //     $now = now();
+    //     $cutoff = $now->copy()->subMinutes($windowMinutes);
+
+    //     // Pull contacts
+    //     $contacts = DB::table('contacts')->get();
+
+    //     foreach ($contacts as $c) {
+    //         // Find latest activity for this contact
+    //         $activity = DB::table('contact_activities')
+    //             ->where('contact_id', $c->contact_id)
+    //             ->orderByDesc('last_messaging_date')
+    //             ->first();
+
+    //         // Has complied? (any YES engagement after last send)
+    //         $lastSendTime = $activity?->last_messaging_date;
+    //         $hasComplied = DB::table('contact_engagements')
+    //             ->where('contact_id', $c->contact_id)
+    //             ->where('engagement_status', 'YES')
+    //             ->when($activity?->tracking_id, fn ($q) => $q->where('tracking_id', $activity->tracking_id)) // If we have a tracking_id, only consider engagements for that ID. If not, consider all engagements but only after the last send time (for backward compatibility)
+    //             ->when(! $activity?->tracking_id && $lastSendTime, fn ($q) => $q->where('occurred_at', '>=', $lastSendTime)) // Only consider engagements after the last send if we don't have a tracking_id (for backward compatibility)
+    //             ->exists();
+
+    //         if ($hasComplied) {
+    //             $this->line("{$c->personal_email} already complied. Skipping.");
+
+    //             continue;
+    //         }
+
+    //         // If no activity yet, send first email
+    //         if (! $activity) {
+    //             $this->sendStep($mailer, $c->contact_id, $c->personal_email, $c->first_name, 1, 'WELCOME_EMAIL');
+
+    //             continue;
+    //         }
+
+    //         // If attempts exceeded, stop
+    //         if ((int) $activity->attempts >= $maxAttempts) {
+    //             $this->line("{$c->personal_email} reached max attempts ({$activity->attempts}).");
+
+    //             continue;
+    //         }
+
+    //         // If not yet due (still within window), skip
+    //         if ($activity->last_messaging_date && $activity->last_messaging_date > $cutoff) {
+    //             $this->line("{$c->personal_email} not due yet (last send: {$activity->last_messaging_date}).");
+
+    //             continue;
+    //         }
+
+    //         // Due and not complied -> resend
+    //         $nextAttempt = ((int) $activity->attempts) + 1;
+    //         $this->sendStep($mailer, $c->contact_id, $c->personal_email, $c->first_name, $nextAttempt, 'FOLLOWUP_EMAIL');
+    //     }
+
+    //     $this->info("Done. Check storage/logs/laravel.log for log-mode 'emails'.");
+
+    //     return self::SUCCESS;
+    // }
+
+    // Refactored handle method to use MarketingWorkflowEngine service class for cleaner code and separation of concerns. The workflow logic is now in the service class, and this command just orchestrates it.
+    public function handle(\App\Services\Workflow\MarketingWorkflowEngine $engine): int
     {
         $windowMinutes = (int) $this->option('minutes');
         $maxAttempts = (int) $this->option('maxAttempts');
 
-        $now = now();
-        $cutoff = $now->copy()->subMinutes($windowMinutes);
-
-        // Pull contacts
-        $contacts = DB::table('contacts')->get();
-
-        foreach ($contacts as $c) {
-            // Find latest activity for this contact
-            $activity = DB::table('contact_activities')
-                ->where('contact_id', $c->contact_id)
-                ->orderByDesc('last_messaging_date')
-                ->first();
-
-            // Has complied? (any YES engagement after last send)
-            $lastSendTime = $activity?->last_messaging_date;
-            $hasComplied = DB::table('contact_engagements')
-                ->where('contact_id', $c->contact_id)
-                ->where('engagement_status', 'YES')
-                ->when($activity?->tracking_id, fn ($q) => $q->where('tracking_id', $activity->tracking_id)) // If we have a tracking_id, only consider engagements for that ID. If not, consider all engagements but only after the last send time (for backward compatibility)
-                ->when(! $activity?->tracking_id && $lastSendTime, fn ($q) => $q->where('occurred_at', '>=', $lastSendTime)) // Only consider engagements after the last send if we don't have a tracking_id (for backward compatibility)
-                ->exists();
-
-            if ($hasComplied) {
-                $this->line("{$c->personal_email} already complied. Skipping.");
-
-                continue;
-            }
-
-            // If no activity yet, send first email
-            if (! $activity) {
-                $this->sendStep($mailer, $c->contact_id, $c->personal_email, $c->first_name, 1, 'WELCOME_EMAIL');
-
-                continue;
-            }
-
-            // If attempts exceeded, stop
-            if ((int) $activity->attempts >= $maxAttempts) {
-                $this->line("{$c->personal_email} reached max attempts ({$activity->attempts}).");
-
-                continue;
-            }
-
-            // If not yet due (still within window), skip
-            if ($activity->last_messaging_date && $activity->last_messaging_date > $cutoff) {
-                $this->line("{$c->personal_email} not due yet (last send: {$activity->last_messaging_date}).");
-
-                continue;
-            }
-
-            // Due and not complied -> resend
-            $nextAttempt = ((int) $activity->attempts) + 1;
-            $this->sendStep($mailer, $c->contact_id, $c->personal_email, $c->first_name, $nextAttempt, 'FOLLOWUP_EMAIL');
-        }
+        $engine->run($windowMinutes, $maxAttempts);
 
         $this->info("Done. Check storage/logs/laravel.log for log-mode 'emails'.");
 
