@@ -84,9 +84,16 @@ class RunMarketingWorkflow extends Command
         $windowMinutes = (int) $this->option('minutes');
         $maxAttempts = (int) $this->option('maxAttempts');
 
-        $engine->run($windowMinutes, $maxAttempts);
+        $summary = $engine->run($windowMinutes, $maxAttempts);
 
-        $this->info("Done. Check storage/logs/laravel.log for log-mode 'emails'.");
+        $this->printEmailList('Sent (first time)', $summary['sent']);
+        $this->printEmailList('Resent (due, not complied)', $summary['resent']);
+        $this->printEmailList('Skipped (already complied)', $summary['skipped_complied']);
+        $this->printEmailList('Skipped (not due yet)', $summary['skipped_not_due']);
+        $this->printEmailList('Skipped (max attempts reached)', $summary['skipped_max_attempts']);
+
+        $this->line('');
+        $this->info('Done. For log-mode emails, see: storage/logs/laravel.log');
 
         return self::SUCCESS;
     }
@@ -132,6 +139,30 @@ class RunMarketingWorkflow extends Command
             'updated_at' => now(),
         ]);
 
-        $this->line("📨 SENT({$result['provider']}) to {$toEmail} attempt={$attempt} step={$stepKey}");
+        $this->line("SENT({$result['provider']}) to {$toEmail} attempt={$attempt} step={$stepKey}");
+    }
+
+    private function printEmailList(string $title, array $items, int $max = 10): void
+    {
+        $count = count($items);
+
+        $this->line('');
+        $this->info($title." ({$count})");
+
+        if ($count === 0) {
+            $this->line('  - none');
+
+            return;
+        }
+
+        $shown = array_slice($items, 0, $max);
+        foreach ($shown as $row) {
+            $this->line('  - '.$row);
+        }
+
+        if ($count > $max) {
+            $more = $count - $max;
+            $this->line("  - ... (+{$more} more)");
+        }
     }
 }

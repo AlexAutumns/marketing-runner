@@ -13,9 +13,17 @@ class MarketingWorkflowEngine
         private readonly MarketingMailer $mailer
     ) {}
 
-    public function run(int $windowMinutes, int $maxAttempts): void
+    public function run(int $windowMinutes, int $maxAttempts): array
     {
         $cutoff = now()->subMinutes($windowMinutes);
+
+        $summary = [
+            'sent' => [],
+            'resent' => [],
+            'skipped_complied' => [],
+            'skipped_not_due' => [],
+            'skipped_max_attempts' => [],
+        ];
 
         $contacts = $this->storage->listContacts();
 
@@ -30,6 +38,12 @@ class MarketingWorkflowEngine
             );
 
             if ($hasComplied) {
+                $info = $c->personal_email;
+                if ($activity?->tracking_id) {
+                    $info .= " (tracking_id={$activity->tracking_id})";
+                }
+                $summary['skipped_complied'][] = $info;
+
                 // stop loop for this contact
                 continue;
             }
@@ -37,20 +51,30 @@ class MarketingWorkflowEngine
             if (! $activity) {
                 $this->sendStep($c->contact_id, $c->personal_email, $c->first_name, 1, 'WELCOME_EMAIL');
 
+                $summary['sent'][] = "{$c->personal_email} (attempt=1 step=WELCOME_EMAIL)";
+
                 continue;
             }
 
             if ((int) $activity->attempts >= $maxAttempts) {
+                $summary['skipped_max_attempts'][] = "{$c->personal_email} (attempts={$activity->attempts})";
+
                 continue;
             }
 
             if ($activity->last_messaging_date && $activity->last_messaging_date > $cutoff) {
+                $summary['skipped_not_due'][] = "{$c->personal_email} (last_sent={$activity->last_messaging_date})";
+
                 continue;
             }
 
             $nextAttempt = ((int) $activity->attempts) + 1;
             $this->sendStep($c->contact_id, $c->personal_email, $c->first_name, $nextAttempt, 'FOLLOWUP_EMAIL');
+
+            $summary['resent'][] = "{$c->personal_email} (attempt={$nextAttempt} step=FOLLOWUP_EMAIL)";
         }
+
+        return $summary;
     }
 
     private function sendStep(string $contactId, string $toEmail, ?string $firstName, int $attempt, string $stepKey): void
