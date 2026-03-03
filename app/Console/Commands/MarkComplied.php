@@ -23,15 +23,28 @@ class MarkComplied extends Command
             return self::FAILURE;
         }
 
+        $latestActivity = DB::table('contact_activities')
+            ->where('contact_id', $contact->contact_id)
+            ->orderByDesc('last_messaging_date')
+            ->first();
+
+        $trackingId = $latestActivity?->tracking_id; // can be null if no activity yet
+
         DB::table('contact_engagements')->insert([
             'engagement_id' => (string) Str::uuid(),
             'contact_id' => $contact->contact_id,
             'engagement_type' => 'COMPLIED',
             'engagement_status' => 'YES',
             'engagement_channel' => 'EMAIL',
-            'tracking_id' => null,
+            'tracking_id' => $trackingId,
             'occurred_at' => now(),
             'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('contacts')->where('contact_id', $contact->contact_id)->update([
+            'lead_status' => env('COMPLIED_LEAD_STATUS', 'Engaged'),
+            'lifecycle_stage' => env('COMPLIED_LIFECYCLE_STAGE', $contact->lifecycle_stage),
             'updated_at' => now(),
         ]);
 

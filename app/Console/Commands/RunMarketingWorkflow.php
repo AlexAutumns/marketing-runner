@@ -36,7 +36,8 @@ class RunMarketingWorkflow extends Command
             $hasComplied = DB::table('contact_engagements')
                 ->where('contact_id', $c->contact_id)
                 ->where('engagement_status', 'YES')
-                ->when($lastSendTime, fn ($q) => $q->where('occurred_at', '>=', $lastSendTime))
+                ->when($activity?->tracking_id, fn ($q) => $q->where('tracking_id', $activity->tracking_id)) // If we have a tracking_id, only consider engagements for that ID. If not, consider all engagements but only after the last send time (for backward compatibility)
+                ->when(! $activity?->tracking_id && $lastSendTime, fn ($q) => $q->where('occurred_at', '>=', $lastSendTime)) // Only consider engagements after the last send if we don't have a tracking_id (for backward compatibility)
                 ->exists();
 
             if ($hasComplied) {
@@ -107,6 +108,7 @@ class RunMarketingWorkflow extends Command
         DB::table('contact_activities')->insert([
             'activity_id' => (string) Str::uuid(),
             'contact_id' => $contactId,
+            'tracking_id' => $trackingId,
             'activity_type' => 'EMAIL_SENT',
             'activity_channel' => 'EMAIL',
             'last_messaging_contents' => $stepKey,
