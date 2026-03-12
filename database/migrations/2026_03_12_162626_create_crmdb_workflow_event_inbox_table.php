@@ -42,6 +42,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('crmdb_workflow_event_inbox');
+        Schema::dropIfExists('CrmDB_Workflow_Event_Inbox');
     }
 };

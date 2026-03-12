@@ -30,6 +30,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('crmdb_workflow_definition');
+        Schema::dropIfExists('CrmDB_Workflow_Definition');
     }
 };
