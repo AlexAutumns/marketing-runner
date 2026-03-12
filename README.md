@@ -1,4 +1,4 @@
-# marketing-runner
+# marketing-runner v1.8
 
 Demo-first marketing workflow runner built with **Laravel** and **SQLite**.
 
