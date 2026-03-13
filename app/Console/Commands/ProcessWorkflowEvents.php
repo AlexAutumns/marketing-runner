@@ -14,7 +14,7 @@ class ProcessWorkflowEvents extends Command
     public function handle(WorkflowEventProcessor $processor): int
     {
         $this->newLine();
-        $this->info('WORKFLOW EVENT PROCESSOR (STEP-AWARE)');
+        $this->info('WORKFLOW EVENT PROCESSOR (STEP-AWARE + ACTION QUEUE)');
         $this->line(str_repeat('-', 70));
 
         $result = $processor->processPendingEvents();

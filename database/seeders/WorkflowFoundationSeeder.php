@@ -37,7 +37,18 @@ class WorkflowFoundationSeeder extends Seeder
                     'notes' => 'Step-aware processing is driven primarily from StepGraphJson in v2 foundation slice.',
                 ],
                 'ActionConfigJson' => [
-                    'notes' => 'No concrete external action execution yet for this sample workflow.',
+                    'on_step_completion' => [
+                        'AWAIT_SIGNAL' => [
+                            [
+                                'action_type' => 'SEND_EMAIL',
+                                'target_type' => 'CONTACT',
+                                'payload' => [
+                                    'template_key' => 'WELCOME_TEMPLATE',
+                                    'notes' => 'Placeholder queued action for workflow kernel demo',
+                                ],
+                            ],
+                        ],
+                    ],
                 ],
                 'StepGraphJson' => [
                     'initial_step' => 'AWAIT_SIGNAL',

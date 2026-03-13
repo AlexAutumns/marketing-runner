@@ -2,6 +2,7 @@
 
 namespace App\Services\Workflow;
 
+use App\Models\WorkflowActionQueue;
 use App\Models\WorkflowEnrollment;
 use App\Models\WorkflowEventInbox;
 use App\Models\WorkflowStepLog;
@@ -107,6 +108,7 @@ class WorkflowEventProcessor
         $stepGraph = $version->StepGraphJson ?? [];
         $currentStepKey = $enrollment->CurrentStepKey ?: $this->getInitialStepKey($stepGraph);
         $currentStep = $this->getStepDefinition($stepGraph, $currentStepKey);
+        $actionConfig = $version->ActionConfigJson ?? [];
 
         if (! $currentStep) {
             $event->update([
@@ -167,6 +169,13 @@ class WorkflowEventProcessor
                 'CompletedAtUTC' => now(),
             ]);
 
+            $queuedActionIds = $this->queueStepActions(
+                enrollment: $enrollment,
+                event: $event,
+                actionConfig: $actionConfig,
+                stepKey: $currentStepKey
+            );
+
             $this->writeStepLog(
                 enrollment: $enrollment,
                 stepKey: $currentStepKey,
@@ -179,6 +188,7 @@ class WorkflowEventProcessor
                     'current_step' => $currentStepKey,
                     'next_step' => $nextStepKey,
                     'terminal' => true,
+                    'queued_action_ids' => $queuedActionIds,
                 ]
             );
 
@@ -192,7 +202,7 @@ class WorkflowEventProcessor
 
             return [
                 'status' => 'processed',
-                'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to terminal step [{$nextStepKey}].",
+                'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
                 'enrollment_id' => $enrollment->EnrollmentID,
             ];
         }
@@ -202,6 +212,13 @@ class WorkflowEventProcessor
             'LastEventID' => $event->EventID,
             'LastActionAtUTC' => now(),
         ]);
+
+        $queuedActionIds = $this->queueStepActions(
+            enrollment: $enrollment,
+            event: $event,
+            actionConfig: $actionConfig,
+            stepKey: $currentStepKey
+        );
 
         $this->writeStepLog(
             enrollment: $enrollment,
@@ -215,6 +232,7 @@ class WorkflowEventProcessor
                 'current_step' => $currentStepKey,
                 'next_step' => $nextStepKey,
                 'terminal' => false,
+                'queued_action_ids' => $queuedActionIds,
             ]
         );
 
@@ -228,7 +246,7 @@ class WorkflowEventProcessor
 
         return [
             'status' => 'processed',
-            'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to [{$nextStepKey}].",
+            'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
             'enrollment_id' => $enrollment->EnrollmentID,
         ];
     }
@@ -288,5 +306,39 @@ class WorkflowEventProcessor
     protected function getInitialStepKey(array $stepGraph): ?string
     {
         return $stepGraph['initial_step'] ?? null;
+    }
+
+    protected function queueStepActions(
+        WorkflowEnrollment $enrollment,
+        WorkflowEventInbox $event,
+        array $actionConfig,
+        string $stepKey
+    ): array {
+        $queuedActionIds = [];
+
+        $actions = data_get($actionConfig, "on_step_completion.{$stepKey}", []);
+
+        foreach ($actions as $action) {
+            $actionQueueId = 'ACTQ_'.Str::upper(Str::random(8));
+
+            WorkflowActionQueue::create([
+                'ActionQueueID' => $actionQueueId,
+                'EnrollmentID' => $enrollment->EnrollmentID,
+                'WorkflowID' => $enrollment->WorkflowID,
+                'WorkflowVersionID' => $enrollment->WorkflowVersionID,
+                'ActionTypeCode' => $action['action_type'] ?? 'UNKNOWN',
+                'ActionStatusCode' => 'PENDING',
+                'TargetTypeCode' => $action['target_type'] ?? null,
+                'TargetID' => $enrollment->ContactID,
+                'RelatedEventID' => $event->EventID,
+                'CorrelationKey' => $event->CorrelationKey,
+                'PayloadJson' => $action['payload'] ?? [],
+                'ScheduledForUTC' => now(),
+            ]);
+
+            $queuedActionIds[] = $actionQueueId;
+        }
+
+        return $queuedActionIds;
     }
 }
