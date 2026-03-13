@@ -25,28 +25,58 @@ class InjectWorkflowEvent extends Command
     {
         $eventId = 'EVT_'.Str::upper(Str::random(8));
 
-        WorkflowEventInbox::create([
+        $eventType = $this->argument('eventType');
+        $contactId = $this->argument('contactId');
+        $workflowId = $this->option('workflowId');
+        $workflowVersionId = $this->option('workflowVersionId');
+        $enrollmentId = $this->option('enrollmentId');
+        $companyId = $this->option('companyId');
+        $source = $this->option('source');
+        $category = $this->option('category');
+        $correlationKey = $this->option('correlationKey');
+
+        $this->newLine();
+        $this->info('WORKFLOW EVENT INJECTION');
+        $this->line(str_repeat('-', 60));
+        $this->line("Input EventTypeCode     : {$eventType}");
+        $this->line("Input ContactID         : {$contactId}");
+        $this->line('Input WorkflowID        : '.($workflowId ?: '[none]'));
+        $this->line('Input WorkflowVersionID : '.($workflowVersionId ?: '[none]'));
+        $this->line('Input EnrollmentID      : '.($enrollmentId ?: '[none]'));
+        $this->line('Input CompanyID         : '.($companyId ?: '[none]'));
+        $this->line("Input EventSourceCode   : {$source}");
+        $this->line("Input EventCategoryCode : {$category}");
+        $this->line('Input CorrelationKey    : '.($correlationKey ?: '[none]'));
+        $this->line(str_repeat('-', 60));
+
+        $event = WorkflowEventInbox::create([
             'EventID' => $eventId,
-            'EventTypeCode' => $this->argument('eventType'),
-            'EventCategoryCode' => $this->option('category'),
-            'EventSourceCode' => $this->option('source'),
-            'ContactID' => $this->argument('contactId'),
-            'CompanyID' => $this->option('companyId'),
-            'WorkflowID' => $this->option('workflowId'),
-            'WorkflowVersionID' => $this->option('workflowVersionId'),
-            'WorkflowEnrollmentID' => $this->option('enrollmentId'),
-            'CorrelationKey' => $this->option('correlationKey'),
+            'EventTypeCode' => $eventType,
+            'EventCategoryCode' => $category,
+            'EventSourceCode' => $source,
+            'ContactID' => $contactId,
+            'CompanyID' => $companyId,
+            'WorkflowID' => $workflowId,
+            'WorkflowVersionID' => $workflowVersionId,
+            'WorkflowEnrollmentID' => $enrollmentId,
+            'CorrelationKey' => $correlationKey,
             'OccurredAtUTC' => now(),
             'PayloadJson' => [
                 'injected_by' => 'workflow:event command',
+                'notes' => 'Manual event injection for workflow-kernel development',
             ],
             'ProcessingStatusCode' => 'PENDING',
         ]);
 
-        $this->info('Workflow event injected successfully.');
-        $this->line("EventID: {$eventId}");
-        $this->line('EventTypeCode: '.$this->argument('eventType'));
-        $this->line('ContactID: '.$this->argument('contactId'));
+        $this->info('Workflow event created successfully.');
+        $this->line("EventID                 : {$event->EventID}");
+        $this->line("Stored ProcessingStatus : {$event->ProcessingStatusCode}");
+        $this->line('OccurredAtUTC           : '.$event->OccurredAtUTC?->toDateTimeString());
+
+        $this->line(str_repeat('-', 60));
+        $this->comment('Next suggested step: process pending workflow events');
+        $this->comment('Example: php artisan workflow:process');
+        $this->line(str_repeat('-', 60));
 
         return self::SUCCESS;
     }

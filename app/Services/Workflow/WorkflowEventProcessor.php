@@ -13,24 +13,39 @@ class WorkflowEventProcessor
 {
     public function processPendingEvents(): array
     {
-        $processed = 0;
-        $ignored = 0;
-        $failed = 0;
+        $summary = [
+            'total_pending' => 0,
+            'processed' => 0,
+            'ignored' => 0,
+            'failed' => 0,
+            'details' => [],
+        ];
 
         $events = WorkflowEventInbox::where('ProcessingStatusCode', 'PENDING')
             ->orderBy('OccurredAtUTC')
             ->get();
 
+        $summary['total_pending'] = $events->count();
+
         foreach ($events as $event) {
             try {
                 $result = $this->processEvent($event);
 
-                if ($result === 'processed') {
-                    $processed++;
-                } elseif ($result === 'ignored') {
-                    $ignored++;
+                $summary['details'][] = [
+                    'event_id' => $event->EventID,
+                    'event_type' => $event->EventTypeCode,
+                    'contact_id' => $event->ContactID,
+                    'result' => $result['status'],
+                    'message' => $result['message'],
+                    'enrollment_id' => $result['enrollment_id'] ?? null,
+                ];
+
+                if ($result['status'] === 'processed') {
+                    $summary['processed']++;
+                } elseif ($result['status'] === 'ignored') {
+                    $summary['ignored']++;
                 } else {
-                    $failed++;
+                    $summary['failed']++;
                 }
             } catch (Throwable $e) {
                 $event->update([
@@ -39,18 +54,23 @@ class WorkflowEventProcessor
                     'ProcessingErrorMessage' => $e->getMessage(),
                 ]);
 
-                $failed++;
+                $summary['details'][] = [
+                    'event_id' => $event->EventID,
+                    'event_type' => $event->EventTypeCode,
+                    'contact_id' => $event->ContactID,
+                    'result' => 'failed',
+                    'message' => $e->getMessage(),
+                    'enrollment_id' => null,
+                ];
+
+                $summary['failed']++;
             }
         }
 
-        return [
-            'processed' => $processed,
-            'ignored' => $ignored,
-            'failed' => $failed,
-        ];
+        return $summary;
     }
 
-    protected function processEvent(WorkflowEventInbox $event): string
+    protected function processEvent(WorkflowEventInbox $event): array
     {
         $enrollment = $this->resolveEnrollment($event);
 
@@ -61,7 +81,11 @@ class WorkflowEventProcessor
                 'ProcessingErrorMessage' => 'No matching enrollment found.',
             ]);
 
-            return 'ignored';
+            return [
+                'status' => 'ignored',
+                'message' => 'No matching active enrollment found.',
+                'enrollment_id' => null,
+            ];
         }
 
         $version = WorkflowVersion::find($enrollment->WorkflowVersionID);
@@ -73,7 +97,11 @@ class WorkflowEventProcessor
                 'ProcessingErrorMessage' => 'Workflow version not found.',
             ]);
 
-            return 'failed';
+            return [
+                'status' => 'failed',
+                'message' => 'Workflow version not found.',
+                'enrollment_id' => $enrollment->EnrollmentID,
+            ];
         }
 
         $acceptedEventTypes = data_get($version->ConditionConfigJson, 'accepted_event_types', []);
@@ -97,8 +125,14 @@ class WorkflowEventProcessor
                 'ProcessedAtUTC' => now(),
             ]);
 
-            return 'ignored';
+            return [
+                'status' => 'ignored',
+                'message' => 'Event type not accepted for current workflow version.',
+                'enrollment_id' => $enrollment->EnrollmentID,
+            ];
         }
+
+        $previousStep = $enrollment->CurrentStepKey;
 
         $enrollment->update([
             'EnrollmentStatusCode' => 'COMPLETED',
@@ -110,13 +144,15 @@ class WorkflowEventProcessor
 
         $this->writeStepLog(
             enrollment: $enrollment,
-            stepKey: 'AWAIT_SIGNAL',
+            stepKey: $previousStep ?? 'AWAIT_SIGNAL',
             stepTypeCode: 'EVENT_EVALUATION',
             stepStatusCode: 'COMPLETED',
             relatedEventId: $event->EventID,
             message: 'Event accepted and workflow enrollment completed.',
             details: [
                 'event_type' => $event->EventTypeCode,
+                'previous_step' => $previousStep,
+                'new_step' => 'COMPLETE',
                 'completion_reason' => 'TEST_EVENT_PROCESSED',
             ]
         );
@@ -129,7 +165,11 @@ class WorkflowEventProcessor
             'ProcessedAtUTC' => now(),
         ]);
 
-        return 'processed';
+        return [
+            'status' => 'processed',
+            'message' => 'Event accepted. Enrollment moved to COMPLETE.',
+            'enrollment_id' => $enrollment->EnrollmentID,
+        ];
     }
 
     protected function resolveEnrollment(WorkflowEventInbox $event): ?WorkflowEnrollment
