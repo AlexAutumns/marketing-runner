@@ -104,56 +104,117 @@ class WorkflowEventProcessor
             ];
         }
 
-        $acceptedEventTypes = data_get($version->ConditionConfigJson, 'accepted_event_types', []);
+        $stepGraph = $version->StepGraphJson ?? [];
+        $currentStepKey = $enrollment->CurrentStepKey ?: $this->getInitialStepKey($stepGraph);
+        $currentStep = $this->getStepDefinition($stepGraph, $currentStepKey);
 
-        if (! in_array($event->EventTypeCode, $acceptedEventTypes, true)) {
+        if (! $currentStep) {
+            $event->update([
+                'ProcessingStatusCode' => 'FAILED',
+                'ProcessedAtUTC' => now(),
+                'ProcessingErrorMessage' => 'Current workflow step definition could not be resolved.',
+            ]);
+
+            return [
+                'status' => 'failed',
+                'message' => 'Current workflow step definition could not be resolved.',
+                'enrollment_id' => $enrollment->EnrollmentID,
+            ];
+        }
+
+        $acceptedEvents = $currentStep['accepted_events'] ?? [];
+
+        if (! in_array($event->EventTypeCode, $acceptedEvents, true)) {
             $this->writeStepLog(
                 enrollment: $enrollment,
-                stepKey: $enrollment->CurrentStepKey ?? 'UNKNOWN',
-                stepTypeCode: 'EVENT_EVALUATION',
+                stepKey: $currentStepKey ?? 'UNKNOWN',
+                stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
                 stepStatusCode: 'IGNORED',
                 relatedEventId: $event->EventID,
-                message: 'Event was received but not accepted by current workflow version.',
+                message: 'Event was received but not accepted by the current workflow step.',
                 details: [
                     'event_type' => $event->EventTypeCode,
-                    'accepted_event_types' => $acceptedEventTypes,
+                    'current_step' => $currentStepKey,
+                    'accepted_events' => $acceptedEvents,
                 ]
             );
 
             $event->update([
+                'WorkflowID' => $enrollment->WorkflowID,
+                'WorkflowVersionID' => $enrollment->WorkflowVersionID,
+                'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
                 'ProcessingStatusCode' => 'IGNORED',
                 'ProcessedAtUTC' => now(),
             ]);
 
             return [
                 'status' => 'ignored',
-                'message' => 'Event type not accepted for current workflow version.',
+                'message' => "Event type not accepted for current step [{$currentStepKey}].",
                 'enrollment_id' => $enrollment->EnrollmentID,
             ];
         }
 
-        $previousStep = $enrollment->CurrentStepKey;
+        $nextStepKey = $currentStep['next'] ?? null;
+        $nextStep = $this->getStepDefinition($stepGraph, $nextStepKey);
+        $isTerminal = (bool) ($nextStep['terminal'] ?? false);
+
+        if ($isTerminal) {
+            $enrollment->update([
+                'EnrollmentStatusCode' => 'COMPLETED',
+                'CurrentStepKey' => $nextStepKey,
+                'CompletedReasonCode' => 'STEP_GRAPH_TERMINAL_REACHED',
+                'LastEventID' => $event->EventID,
+                'CompletedAtUTC' => now(),
+            ]);
+
+            $this->writeStepLog(
+                enrollment: $enrollment,
+                stepKey: $currentStepKey,
+                stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
+                stepStatusCode: 'COMPLETED',
+                relatedEventId: $event->EventID,
+                message: 'Event accepted and workflow reached a terminal step.',
+                details: [
+                    'event_type' => $event->EventTypeCode,
+                    'current_step' => $currentStepKey,
+                    'next_step' => $nextStepKey,
+                    'terminal' => true,
+                ]
+            );
+
+            $event->update([
+                'WorkflowID' => $enrollment->WorkflowID,
+                'WorkflowVersionID' => $enrollment->WorkflowVersionID,
+                'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
+                'ProcessingStatusCode' => 'PROCESSED',
+                'ProcessedAtUTC' => now(),
+            ]);
+
+            return [
+                'status' => 'processed',
+                'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to terminal step [{$nextStepKey}].",
+                'enrollment_id' => $enrollment->EnrollmentID,
+            ];
+        }
 
         $enrollment->update([
-            'EnrollmentStatusCode' => 'COMPLETED',
-            'CurrentStepKey' => 'COMPLETE',
-            'CompletedReasonCode' => 'TEST_EVENT_PROCESSED',
+            'CurrentStepKey' => $nextStepKey,
             'LastEventID' => $event->EventID,
-            'CompletedAtUTC' => now(),
+            'LastActionAtUTC' => now(),
         ]);
 
         $this->writeStepLog(
             enrollment: $enrollment,
-            stepKey: $previousStep ?? 'AWAIT_SIGNAL',
-            stepTypeCode: 'EVENT_EVALUATION',
+            stepKey: $currentStepKey,
+            stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
             stepStatusCode: 'COMPLETED',
             relatedEventId: $event->EventID,
-            message: 'Event accepted and workflow enrollment completed.',
+            message: 'Event accepted and workflow advanced to the next step.',
             details: [
                 'event_type' => $event->EventTypeCode,
-                'previous_step' => $previousStep,
-                'new_step' => 'COMPLETE',
-                'completion_reason' => 'TEST_EVENT_PROCESSED',
+                'current_step' => $currentStepKey,
+                'next_step' => $nextStepKey,
+                'terminal' => false,
             ]
         );
 
@@ -167,7 +228,7 @@ class WorkflowEventProcessor
 
         return [
             'status' => 'processed',
-            'message' => 'Event accepted. Enrollment moved to COMPLETE.',
+            'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to [{$nextStepKey}].",
             'enrollment_id' => $enrollment->EnrollmentID,
         ];
     }
@@ -205,5 +266,27 @@ class WorkflowEventProcessor
             'DetailsJson' => $details,
             'OccurredAtUTC' => now(),
         ]);
+    }
+
+    protected function getStepDefinition(array $stepGraph, ?string $stepKey): ?array
+    {
+        if (! $stepKey) {
+            return null;
+        }
+
+        $steps = $stepGraph['steps'] ?? [];
+
+        foreach ($steps as $step) {
+            if (($step['key'] ?? null) === $stepKey) {
+                return $step;
+            }
+        }
+
+        return null;
+    }
+
+    protected function getInitialStepKey(array $stepGraph): ?string
+    {
+        return $stepGraph['initial_step'] ?? null;
     }
 }

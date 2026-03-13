@@ -34,19 +34,24 @@ class WorkflowFoundationSeeder extends Seeder
                     'start_mode' => 'manual_enrollment',
                 ],
                 'ConditionConfigJson' => [
-                    'accepted_event_types' => ['MANUAL_TEST_EVENT', 'EMAIL_CLICK'],
+                    'notes' => 'Step-aware processing is driven primarily from StepGraphJson in v2 foundation slice.',
                 ],
-                'ActionConfigJson' => [],
+                'ActionConfigJson' => [
+                    'notes' => 'No concrete external action execution yet for this sample workflow.',
+                ],
                 'StepGraphJson' => [
                     'initial_step' => 'AWAIT_SIGNAL',
                     'steps' => [
                         [
                             'key' => 'AWAIT_SIGNAL',
+                            'type' => 'WAIT_FOR_EVENT',
                             'accepted_events' => ['MANUAL_TEST_EVENT', 'EMAIL_CLICK'],
                             'next' => 'COMPLETE',
+                            'terminal_on_match' => false,
                         ],
                         [
                             'key' => 'COMPLETE',
+                            'type' => 'END',
                             'terminal' => true,
                         ],
                     ],
