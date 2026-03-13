@@ -1,320 +1,268 @@
-# marketing-runner v1.8
+# Marketing Runner — README (v2.5)
 
-Demo-first marketing workflow runner built with **Laravel** and **SQLite**.
+## Purpose of this repository
+This repository currently contains **two important development tracks**:
 
-This repository is a small, focused workflow engine for the wider CRM initiative. It is designed to be:
+- **v1.8** — the original marketing runner that proves the email send → wait → check compliance → resend loop
+- **v2.5** — the newer **workflow kernel foundation** that begins turning the project into a definition-driven, event-aware workflow engine
 
-- **Adaptable** — swap email providers without rewriting workflow logic
-- **Robust** — keep a stable demo path even when external access is not ready
-- **Easy to edit** — separate engine logic from storage and mail delivery details
-- **Safe for demos** — use log mode or SMTP sandbox tools without touching production systems
+This README is written for the **current v2.5 state of the branch**, but it also includes a full guide for the older **v1.8 path** because that is still useful for demos, comparison, fallback, and historical context.
 
----
+The design philosophy for this project is:
 
-## What this project currently does
+- **adaptable**
+- **resilient**
+- **anti-rewrite**
+- **sturdy core, flexible edges**
 
-At a high level, the runner executes a simple marketing workflow loop:
-
-1. **Read eligible contacts**
-2. **Send** an email (log mode or SMTP)
-3. **Record activity** in the database
-4. **Wait** based on a time window
-5. **Check compliance**
-6. **Resend** if needed
-7. **Stop** if complied or max attempts reached
-
-Right now, compliance is still **manual** for demo/testing:
-- a contact is marked complied through:
-  - `php artisan marketing:complied test1@example.com`
-
-This means the project **does not yet have automatic click / reply / form-submit compliance tracking**.
+That means the project tries to keep the workflow core stable while allowing the surrounding integrations, providers, signal sources, and transport methods to evolve later.
 
 ---
 
-## Current status summary
+# Table of contents
 
-### Already implemented
-- Workflow execution engine
-- Storage adapter pattern
-- Mail adapter pattern
-- Log mail mode
-- SMTP mail mode
-- Demo reset command
-- Manual compliance command
-- Tracking IDs stored on send activities
-- Compliance check prefers `tracking_id`
-
-### Not implemented yet
-- Automatic compliance tracking from:
-  - reply
-  - click
-  - form submit
-- Azure SQL storage adapter
-- Mailchimp provider adapter
-- UI builder for IF / THEN workflow definitions
-
----
-
-## Core design philosophy
-
-This project was intentionally built **engine-first**.
-
-### Why?
-Because the wider CRM project still has moving parts:
-- Azure SQL access is still pending/finalizing
-- Mailchimp access is still pending/finalizing
-- final event ingestion design is still not confirmed
-- final target table mapping is still not confirmed
-
-So instead of blocking on those dependencies, this runner proves the most important thing first:
-
-> the workflow logic itself works, and the code structure allows later integration without a rewrite.
+1. [Current state of the project](#current-state-of-the-project)
+2. [High-level architecture](#high-level-architecture)
+3. [Version overview: v1.8 vs v2.5](#version-overview-v18-vs-v25)
+4. [v2.5 workflow kernel overview](#v25-workflow-kernel-overview)
+5. [How v2.5 fits the wider CRM direction](#how-v25-fits-the-wider-crm-direction)
+6. [Requirements](#requirements)
+7. [Local setup for v2.5](#local-setup-for-v25)
+8. [v2.5 database and branch notes](#v25-database-and-branch-notes)
+9. [v2.5 files and folders to know](#v25-files-and-folders-to-know)
+10. [v2.5 workflow flow explained](#v25-workflow-flow-explained)
+11. [v2.5 demo guide](#v25-demo-guide)
+12. [v2.5 terminal commands reference](#v25-terminal-commands-reference)
+13. [What v2.5 proves right now](#what-v25-proves-right-now)
+14. [Current limitations of v2.5](#current-limitations-of-v25)
+15. [v1.8 overview](#v18-overview)
+16. [v1.8 local setup guide](#v18-local-setup-guide)
+17. [v1.8 demo guide](#v18-demo-guide)
+18. [v1.8 SMTP / Mailtrap notes](#v18-smtp--mailtrap-notes)
+19. [Suggested demo script for showing progress from v1.8 to v2.5](#suggested-demo-script-for-showing-progress-from-v18-to-v25)
+20. [Troubleshooting](#troubleshooting)
+21. [Next recommended development steps after v2.5](#next-recommended-development-steps-after-v25)
 
 ---
 
-## Project architecture
+# Current state of the project
 
-There are **three core layers**:
+## What exists now
+This branch contains both:
 
-### 1) Workflow Engine
-**File:** `app/Services/Workflow/MarketingWorkflowEngine.php`
+### v1.8 foundation
+The original Laravel marketing runner can:
+- load contacts from SQLite
+- send emails in **log mode** or **SMTP mode**
+- record contact activity
+- wait based on time
+- check manual compliance
+- resend when due
+- stop when complied or max attempts are reached
 
-This is the core logic layer.
+### v2.5 workflow kernel foundation
+The newer workflow kernel can:
+- store workflow definitions as data
+- store workflow versions as data
+- enroll a contact into a workflow version
+- store normalized workflow events in an event inbox
+- process workflow events against the current workflow step
+- write workflow step history
+- queue a placeholder action decision into a workflow action queue
 
-#### Purpose
-To run the send → wait → check → resend loop.
-
-#### What it does
-- reads contacts from storage
-- checks latest activity
-- checks whether the contact complied
-- decides whether to send, resend, skip, or stop
-- records new activity state
-
-#### Why it matters
-This is the most important part of the project and should remain stable even if:
-- the DB changes
-- the email provider changes
-- the CRM schema changes
+So the project is no longer only a simple runner. It is now beginning to become a **workflow engine foundation**.
 
 ---
 
-### 2) Storage Adapter
-**Files:**
-- `app/Contracts/MarketingStorage.php`
-- `app/Services/Storage/DemoSqliteMarketingStorage.php`
+# High-level architecture
 
-#### Purpose
-To isolate database reads and writes from the workflow engine.
+The code now has two architectural layers in practice.
 
-#### What it does
-The engine does not directly talk to table names. Instead, it calls storage methods like:
-- list contacts
-- get latest activity
-- insert activity
-- insert engagement
-- update contact fields
+## Layer 1 — Original marketing runner (v1.8)
+This is the earlier, more concrete workflow loop:
+- send
+- wait
+- check compliance
+- resend
+- stop
 
-#### Why it matters
-Right now, the implementation uses **SQLite demo tables**.
+It is useful because it proves the basic marketing automation concept and is still easy to demo.
 
-Later, this can be replaced with an **Azure SQL CRM storage adapter** that maps the same engine operations into the official CRM schema.
+## Layer 2 — Workflow kernel foundation (v2.5)
+This is the newer, more general workflow architecture:
+- workflow definition
+- workflow version
+- workflow enrollment
+- workflow event inbox
+- workflow step log
+- workflow action queue
+- workflow event processor
+
+This is useful because it is much closer to the long-term CRM architecture.
+
+---
+
+# Version overview: v1.8 vs v2.5
+
+## v1.8
+### Main purpose
+Prove the original end-to-end marketing loop quickly in a local environment.
+
+### Strong points
+- easy to understand
+- easy to demo
+- supports log mode and SMTP sandbox testing
+- records activity and engagement
+- good for proving the original campaign follow-up concept
+
+### Main limitation
+It is still more **flow-specific** and less **definition-driven**.
+
+## v2.5
+### Main purpose
+Build the first reusable workflow kernel that can stay with the long-term program.
+
+### Strong points
+- workflows now exist as data
+- event intake exists as a stable workflow boundary
+- state, history, events, and actions are separated more clearly
+- processing is now step-aware
+- a placeholder action queue exists
+
+### Main limitation
+It is still an early kernel slice, not a final complete workflow engine.
+
+---
+
+# v2.5 workflow kernel overview
+
+## Main idea
+v2.5 is the first build slice of a **definition-driven, event-aware workflow kernel**.
+
+The current sample workflow proves that:
+- a workflow can exist as data
+- a version can define step flow
+- a contact can be enrolled into that workflow
+- a workflow event can enter through a normalized event boundary
+- the processor can interpret the event using the current step and step graph
+- the processor can update state, write step history, and queue an action decision
+
+## Philosophy
+v2.5 follows this philosophy:
+
+- the **core** should stay stable
+- the **edges** are allowed to change
+
+That means the workflow core should not be tightly hardcoded to:
+- one provider
+- one webhook shape
+- one signal source
+- one compliance method
+- one score source
+- one prediction source
+
+The event model and action queue exist specifically to keep the core stable while the edges evolve later.
+
+---
+
+# How v2.5 fits the wider CRM direction
+
+The v2.5 workflow kernel is meant to align with the broader CRM direction already discussed in related documents.
+
+## What it is trying to become
+It is trying to become the **workflow orchestration layer**, not the full owner of every other subsystem.
 
 That means:
-- **engine logic stays the same**
-- only the storage implementation changes
+- it should consume workflow-relevant occurrences
+- interpret them in workflow context
+- change workflow state
+- decide actions
+- leave provider execution and some source-specific details flexible
+
+## What it is not trying to be yet
+It is not yet:
+- the final Mailchimp integration layer
+- the final Azure SQL integration layer
+- the final lead-scoring engine
+- the final prediction engine
+- the final workflow builder UI
 
 ---
 
-### 3) Mail Adapter
-**Files:**
-- `app/Contracts/MarketingMailer.php`
-- `app/Services/Mail/LogMarketingMailer.php`
-- `app/Services/Mail/LaravelSmtpMarketingMailer.php`
-- `app/Providers/AppServiceProvider.php`
+# Requirements
 
-#### Purpose
-To isolate email sending logic from the workflow engine.
-
-#### What it does
-The engine calls the mail adapter, and the provider binding decides how the message is sent:
-- `log` mode → writes to `storage/logs/laravel.log`
-- `smtp` mode → sends through configured SMTP credentials
-
-#### Why it matters
-This lets you:
-- demo safely in log mode
-- test real SMTP without rewriting engine logic
-- add Mailchimp later as another adapter
-
----
-
-## Current file structure (important files only)
-
-### Commands
-- `app/Console/Commands/RunMarketingWorkflow.php`
-- `app/Console/Commands/MarkComplied.php`
-- `app/Console/Commands/ResetMarketingDemo.php`
-
-### Engine
-- `app/Services/Workflow/MarketingWorkflowEngine.php`
-
-### Storage
-- `app/Contracts/MarketingStorage.php`
-- `app/Services/Storage/DemoSqliteMarketingStorage.php`
-
-### Mail
-- `app/Contracts/MarketingMailer.php`
-- `app/Services/Mail/LogMarketingMailer.php`
-- `app/Services/Mail/LaravelSmtpMarketingMailer.php`
-
-### Provider binding
-- `app/Providers/AppServiceProvider.php`
-
-### Email template
-- `resources/views/emails/welcome.blade.php`
-
-### Database / seeders
-- `database/migrations/...`
-- `database/seeders/DemoContactsSeeder.php`
-
----
-
-## Database model used right now
-
-### `contacts`
-Stores:
-- contact_id
-- personal_email
-- first_name
-- lifecycle_stage
-- lead_status
-- cilos_substage_id
-
-### `contact_activities`
-Stores:
-- activity_id
-- contact_id
-- tracking_id
-- activity_type
-- activity_channel
-- last_messaging_contents
-- last_messaging_date
-- attempts
-
-### `contact_engagements`
-Stores:
-- engagement_id
-- contact_id
-- engagement_type
-- engagement_status
-- engagement_channel
-- tracking_id
-- occurred_at
-
----
-
-## How the current workflow logic works
-
-### Step 1 — Find contacts
-The engine reads all contacts from the storage adapter.
-
-### Step 2 — Get latest activity
-For each contact, it checks the latest send activity.
-
-### Step 3 — Check compliance
-If the latest activity has a `tracking_id`, the engine checks whether there is a matching engagement row with:
-- `engagement_status = YES`
-- same `tracking_id`
-
-If no `tracking_id` exists, the fallback logic uses time-based comparison.
-
-### Step 4 — Decide action
-The engine then does one of these:
-
-- **Send first email**
-  - if no activity exists yet
-
-- **Resend**
-  - if the contact is due and has not complied
-
-- **Skip as complied**
-  - if compliance exists
-
-- **Skip as not due**
-  - if the wait window has not passed yet
-
-- **Skip as max attempts reached**
-  - if attempts already reached the configured limit
-
-### Step 5 — Record send activity
-When an email is sent, the engine stores:
-- a new `tracking_id`
-- attempt number
-- step key
-- last send time
-
-This is what gives the workflow state.
-
----
-
-## Compliance tracking: current reality
-
-### Important current limitation
-**There is no automatic compliance tracking yet.**
-
-That means:
-- Mailtrap or SMTP sending only proves the **send path**
-- it does **not** automatically mark contacts as complied
-
-### So what should you do right now?
-Yes — **you still need to use the compliance command** in demos/tests:
-
-```bash
-php artisan marketing:complied test1@example.com
-```
-
-### Why?
-Because reply / click / form tracking has not been implemented yet.
-
-### What this command currently does
-- finds the contact by email
-- finds the latest activity
-- copies that activity's `tracking_id`
-- inserts a `COMPLIED` engagement row
-- updates the contact's `lead_status` and `lifecycle_stage`
-
----
-
-## Requirements
-
+## Required
 - PHP 8.2+
 - Composer
-- SQLite (file-based, no server required)
-- Optional: SMTP sandbox provider (Mailtrap main, Ethereal fallback)
+- SQLite
+- Laravel-compatible CLI environment
+
+## Optional but useful
+- Mailtrap or another SMTP sandbox for v1.8 SMTP testing
+- Git
+- VS Code or another editor
 
 ---
 
-## Local setup
+# Local setup for v2.5
 
-### 1) Install dependencies
+This setup assumes you are working on the **workflow kernel v2.x branch**.
+
+## 1. Open the repository root
+The repository root is the folder containing:
+- `artisan`
+- `app/`
+- `database/`
+- `composer.json`
+
+## 2. Install dependencies
+Run this in the repository root:
+
 ```bash
 composer install
 ```
 
-### 2) Configure environment
-Copy example file:
+### Why
+Laravel needs the `vendor/` directory before artisan commands can run.
+
+---
+
+## 3. Copy the environment file
+If you do not already have a local `.env`, create one from the example file.
+
+### Windows PowerShell
 ```bash
 copy .env.example .env
 ```
 
-### 3) Minimum `.env` for local log-mode
+### Why
+Laravel reads DB, app, cache, queue, and mail settings from `.env`.
+
+---
+
+## 4. Generate the app key
+Run this in the repository root:
+
+```bash
+php artisan key:generate
+```
+
+### Why
+Laravel expects an `APP_KEY` in `.env`.
+
+---
+
+## 5. Configure the database for v2.5
+For the v2.5 branch, the recommended local DB is a **new SQLite file** separate from the older v1.8 demo DB.
+
+### Example `.env` values
 ```env
 APP_ENV=local
 APP_DEBUG=true
+APP_URL=http://localhost
 
 DB_CONNECTION=sqlite
-DB_DATABASE=database/database.sqlite
+DB_DATABASE=database/workflow_engine.sqlite
 
 SESSION_DRIVER=file
 QUEUE_CONNECTION=sync
@@ -324,305 +272,631 @@ MAIL_DRIVER_MODE=log
 MAIL_MAILER=log
 MAIL_FROM_ADDRESS="demo@marketing-runner.local"
 MAIL_FROM_NAME="Marketing Runner"
-
-COMPLIED_LEAD_STATUS=Engaged
-COMPLIED_LIFECYCLE_STAGE=Interest
 ```
 
-### 4) Create SQLite DB file
-PowerShell:
+### Why
+This keeps the older v1.8 demo DB separate from the newer workflow-kernel DB.
+
+---
+
+## 6. Create the SQLite file for v2.5
+### Windows PowerShell
+Run this in the repository root:
+
+```bash
+New-Item -ItemType File -Path .\database\workflow_engine.sqlite -Force
+```
+
+### Why
+Laravel needs the file to exist when using SQLite.
+
+---
+
+## 7. Clear cached config
+Run this in the repository root:
+
+```bash
+php artisan optimize:clear
+```
+
+### Why
+This makes sure Laravel picks up the latest `.env` settings.
+
+---
+
+## 8. Run migrations
+Run this in the repository root:
+
+```bash
+php artisan migrate
+```
+
+### Important note
+Because Laravel runs all migrations found in `database/migrations`, your new `workflow_engine.sqlite` may include:
+- old base/demo tables from v1.8
+- plus the new workflow-kernel tables
+
+This is acceptable in the current local development setup.
+
+---
+
+## 9. Seed the sample workflow foundation
+Run this in the repository root:
+
+```bash
+php artisan db:seed --class=WorkflowFoundationSeeder
+```
+
+### Why
+This creates the sample workflow definition and version used by the v2.5 demo flow.
+
+---
+
+# v2.5 database and branch notes
+
+## Recommended branch idea
+The v2.5 work should live in a separate Git branch from v1.8.
+
+Example branch name:
+- `feature/workflow-kernel-v2`
+
+## Why the separate branch matters
+This keeps the original runner stable while the newer workflow kernel evolves.
+
+## Recommended DB separation
+- `database/database.sqlite` → older v1.8 demo DB
+- `database/workflow_engine.sqlite` → newer v2.5 workflow kernel DB
+
+This is not a strict requirement, but it is strongly recommended for clarity.
+
+---
+
+# v2.5 files and folders to know
+
+## Main workflow-kernel files
+
+### Models
+- `app/Models/WorkflowDefinition.php`
+- `app/Models/WorkflowVersion.php`
+- `app/Models/WorkflowEnrollment.php`
+- `app/Models/WorkflowStepLog.php`
+- `app/Models/WorkflowEventInbox.php`
+- `app/Models/WorkflowActionQueue.php`
+
+### Commands
+- `app/Console/Commands/EnrollWorkflowContact.php`
+- `app/Console/Commands/InjectWorkflowEvent.php`
+- `app/Console/Commands/ProcessWorkflowEvents.php`
+
+### Processor service
+- `app/Services/Workflow/WorkflowEventProcessor.php`
+
+### Seeder
+- `database/seeders/WorkflowFoundationSeeder.php`
+
+### Workflow-kernel migrations
+- `database/migrations/*create_crmdb_workflow_definition_table.php`
+- `database/migrations/*create_crmdb_workflow_version_table.php`
+- `database/migrations/*create_crmdb_workflow_enrollment_table.php`
+- `database/migrations/*create_crmdb_workflow_step_log_table.php`
+- `database/migrations/*create_crmdb_workflow_event_inbox_table.php`
+- `database/migrations/*create_crmdb_workflow_action_queue_table.php`
+
+---
+
+# v2.5 workflow flow explained
+
+The current sample workflow is intentionally simple.
+
+## Sample workflow
+- Workflow key: `MKT_WELCOME_FLOW`
+- Version: `1`
+- Initial step: `AWAIT_SIGNAL`
+- Accepted events at that step:
+  - `MANUAL_TEST_EVENT`
+  - `EMAIL_CLICK`
+- Next step: `COMPLETE`
+- `COMPLETE` is terminal
+
+## What that means
+The current workflow kernel is proving this sequence:
+
+1. workflow definition exists
+2. workflow version exists
+3. contact is enrolled into the workflow version
+4. event enters normalized workflow inbox
+5. processor reads the current step from enrollment
+6. processor reads the step graph from the workflow version
+7. processor checks whether the current step accepts that event
+8. processor transitions the enrollment to the next step
+9. if the next step is terminal, enrollment is completed
+10. a step log row is written
+11. a placeholder action decision is queued in `CrmDB_Workflow_Action_Queue`
+
+This is the current workflow-kernel foundation slice.
+
+---
+
+# v2.5 demo guide
+
+This is the recommended demo path for the newer workflow kernel.
+
+## Demo goal
+Show that the project has moved beyond a hardcoded email runner and has started becoming a real workflow kernel.
+
+## Demo sequence
+
+### 1. Seed the sample workflow
+Run in project root:
+
+```bash
+php artisan db:seed --class=WorkflowFoundationSeeder
+```
+
+### What to explain
+This inserts:
+- one workflow definition
+- one workflow version
+- one step graph
+- one placeholder action config
+
+---
+
+### 2. Enroll a contact into the workflow
+Run in project root:
+
+```bash
+php artisan workflow:enroll CNT_3001 WFL_001 WFLV_001
+```
+
+### What to explain
+This command now:
+- validates the workflow definition exists
+- validates the workflow version exists
+- validates that the version belongs to the workflow
+- checks whether an active enrollment already exists
+- creates the enrollment if valid
+- writes the first step log row
+
+### What this proves
+This proves the workflow runtime state now exists as data.
+
+---
+
+### 3. Inject a workflow event
+Run in project root:
+
+```bash
+php artisan workflow:event MANUAL_TEST_EVENT CNT_3001 --workflowId=WFL_001 --workflowVersionId=WFLV_001
+```
+
+### What to explain
+This inserts a normalized workflow-facing event into `CrmDB_Workflow_Event_Inbox`.
+
+### What this proves
+This proves the workflow boundary now accepts normalized workflow events instead of relying only on hardcoded loops.
+
+---
+
+### 4. Process workflow events
+Run in project root:
+
+```bash
+php artisan workflow:process
+```
+
+### What to explain
+This command now:
+- reads pending workflow events
+- resolves workflow context
+- reads the current step from the enrollment
+- reads the step graph from the workflow version
+- evaluates whether the current step accepts the event
+- advances the workflow to the next step
+- completes the run if the next step is terminal
+- writes the step log
+- queues a placeholder action decision in the action queue
+
+### What this proves
+This is the main proof of the workflow kernel.
+
+---
+
+## What to say during the demo
+A good summary line is:
+
+> “We are now moving from the original demo runner into a definition-driven, event-aware workflow kernel. The workflow now exists as versioned data, a contact can be enrolled into it, the engine can process normalized events against the current workflow step, and the system records both step history and action decisions separately.”
+
+---
+
+# v2.5 terminal commands reference
+
+## Enroll a contact
+```bash
+php artisan workflow:enroll CNT_3001 WFL_001 WFLV_001
+```
+
+### Purpose
+Creates a workflow enrollment and initial step log.
+
+---
+
+## Inject an event
+```bash
+php artisan workflow:event MANUAL_TEST_EVENT CNT_3001 --workflowId=WFL_001 --workflowVersionId=WFLV_001
+```
+
+### Purpose
+Creates a normalized workflow event in the inbox.
+
+---
+
+## Process events
+```bash
+php artisan workflow:process
+```
+
+### Purpose
+Processes all pending workflow events.
+
+---
+
+# What v2.5 proves right now
+
+v2.5 already proves these important things:
+
+- workflows can exist as data
+- workflow versions can exist as data
+- runtime workflow state can exist as data
+- workflow-relevant occurrences can enter through a normalized boundary
+- events can be interpreted in step context
+- workflow state and workflow history are separated
+- action intent can be queued separately from event intake and state progression
+
+This is meaningful progress toward the larger CRM workflow architecture.
+
+---
+
+# Current limitations of v2.5
+
+These are important to state honestly.
+
+## What is not complete yet
+- no visual workflow builder UI yet
+- no full action executor yet
+- no `Workflow_Action_Result` table yet
+- no real provider integration yet
+- no final Mailchimp integration yet
+- no final Azure SQL integration yet
+- no final click redirect flow yet
+- no final form submission integration yet
+- no final reply parsing yet
+- no BP/TS/YD production integration yet
+- event taxonomy may still expand later
+
+## What that means
+v2.5 is a **real workflow foundation slice**, but it is still an early kernel, not a final finished workflow platform.
+
+---
+
+# v1.8 overview
+
+The older v1.8 runner is still useful and should be kept.
+
+## What v1.8 does
+The original runner proves the concrete campaign loop:
+- send first email
+- wait
+- check compliance
+- resend if needed
+- stop if complied or max attempts reached
+
+## Why it still matters
+It is still useful for:
+- historical comparison
+- showing the original business proof-of-concept
+- fallback demos
+- SMTP testing
+- Mailtrap/log-mode demonstrations
+
+---
+
+# v1.8 local setup guide
+
+This section mirrors the earlier v1.8 README idea.
+
+## 1. Configure `.env` for v1.8 database
+If you want to run the older v1.8 flow, point SQLite back to the original DB.
+
+### Example
+```env
+DB_CONNECTION=sqlite
+DB_DATABASE=database/database.sqlite
+```
+
+### Why
+The original runner used the earlier database file and earlier contact/activity/engagement flow.
+
+---
+
+## 2. Create the v1.8 DB file if needed
+Run in project root:
+
 ```bash
 New-Item -ItemType File -Path .\database\database.sqlite -Force
 ```
 
-### 5) Generate app key + migrate
+---
+
+## 3. Clear config cache
 ```bash
-php artisan key:generate
+php artisan optimize:clear
+```
+
+---
+
+## 4. Run migrations
+```bash
 php artisan migrate
 ```
 
-### 6) Seed demo contacts
+### Why
+This creates the v1.8 demo tables such as:
+- contacts
+- contact_activities
+- contact_engagements
+
+---
+
+## 5. Seed demo contacts
+Run in project root:
+
 ```bash
 php artisan db:seed --class=DemoContactsSeeder
 ```
 
+### Why
+This inserts local demo contacts for the v1.8 send/wait/check flow.
+
 ---
 
-## Demo guide — local log mode (recommended stable path)
+# v1.8 demo guide
 
-This is the **most stable demo** and should always remain your fallback path.
+## Demo goal
+Show the original campaign automation proof-of-concept.
 
-### Step 1 — Make sure `.env` uses log mode
+## Path A — safe log-mode demo
+
+### 1. Set mail mode to log
+In `.env`:
+
 ```env
 MAIL_DRIVER_MODE=log
 MAIL_MAILER=log
-```
-
-### Step 2 — Clear caches
-```bash
-php artisan optimize:clear
-```
-
-### Step 3 — Reset and reseed
-```bash
-php artisan marketing:reset --reseed --force
-```
-
-### Step 4 — Run the workflow
-```bash
-php artisan marketing:run --minutes=1 --maxAttempts=3
-```
-
-### What should happen
-- contacts are processed
-- send attempts are recorded in `contact_activities`
-- console groups results into:
-  - Sent
-  - Resent
-  - Skipped (already complied)
-  - Skipped (not due)
-  - Skipped (max attempts reached)
-
-### Step 5 — Inspect generated email output
-Open:
-- `storage/logs/laravel.log`
-
-### What you should see
-- email subject
-- tracking id
-- body preview
-
-### Step 6 — Simulate compliance
-```bash
-php artisan marketing:complied test1@example.com
-```
-
-### Step 7 — Run again
-```bash
-php artisan marketing:run --minutes=1 --maxAttempts=3
-```
-
-### Expected result
-- `test1@example.com` should now appear under:
-  - `Skipped (already complied)`
-
----
-
-## Demo guide — Mailtrap SMTP sandbox testing
-
-This is your **main visible SMTP proof path**.
-
-### What Mailtrap proves
-Mailtrap proves:
-- your Laravel SMTP mailer works
-- your workflow engine can send through SMTP
-- your rendered email appears in a sandbox inbox
-
-### What Mailtrap does NOT prove
-Mailtrap does **not** automatically track compliance in your current project.
-
-So even in Mailtrap mode:
-- you still need to use `marketing:complied` manually
-
----
-
-### Step 1 — Create / open your Mailtrap Email Sandbox inbox
-In Mailtrap:
-- create a sandbox inbox/project
-- copy the SMTP credentials
-
-### Step 2 — Update `.env` for SMTP mode
-```env
-MAIL_DRIVER_MODE=smtp
-MAIL_MAILER=smtp
-MAIL_HOST=your_mailtrap_host
-MAIL_PORT=2525
-MAIL_USERNAME=your_mailtrap_username
-MAIL_PASSWORD=your_mailtrap_password
-MAIL_ENCRYPTION=tls
 MAIL_FROM_ADDRESS="demo@marketing-runner.local"
 MAIL_FROM_NAME="Marketing Runner"
 ```
 
-### Step 3 — Clear caches
+### 2. Run the workflow
 ```bash
-php artisan optimize:clear
-```
-
-### Step 4 — Reset and reseed
-```bash
-php artisan marketing:reset --reseed --force
-```
-
-### Step 5 — Run the workflow
-```bash
-php artisan marketing:run --minutes=1 --maxAttempts=1
-```
-
-### Why use `--maxAttempts=1` for Mailtrap?
-Because Mailtrap free sandbox plans can have strict message rate limits.
-
-You already hit this error:
-```txt
-550 5.7.0 Too many emails per second. Please upgrade your plan
-```
-
-So the safest Mailtrap demo approach is:
-- keep sends very small
-- avoid blasting all 10 contacts at once
-- use `--maxAttempts=1`
-
-### Important current limitation with your current seeder
-Your `DemoContactsSeeder` currently creates **10 contacts**.
-
-That means the engine tries to send to all 10 on first run, which can exceed Mailtrap free limits.
-
----
-
-## Recommended Mailtrap testing strategy right now
-
-### Best current workaround
-Use **only one contact** or a very small number of contacts when testing Mailtrap SMTP.
-
-You have a few options:
-
-### Option A — temporarily reduce seeded contacts
-Edit `database/seeders/DemoContactsSeeder.php` and reduce the loop count from 10 to 1 or 2 while testing Mailtrap.
-
-Then restore it after testing if needed.
-
-### Option B — create a dedicated SMTP sandbox seeder (recommended)
-Create a separate seeder specifically for SMTP sandbox testing, for example:
-- `SmtpSandboxContactsSeeder`
-
-This would seed only:
-- 1 or 2 contacts
-
-### Why this is recommended
-It keeps:
-- your normal workflow demo seeder separate
-- your SMTP sandbox testing controlled
-- Mailtrap free-tier limits easier to handle
-
----
-
-## Current answer to your question about compliance
-### Question
-“Right now we have nothing to track compliance, right?”
-
-### Answer
-Correct — **there is no automatic compliance tracking yet**.
-
-### Question
-“So that means I still have to do the compliance command when I try?”
-
-### Answer
-Yes — **you still need to run**:
-
-```bash
-php artisan marketing:complied test1@example.com
-```
-
-until a real event source is implemented.
-
----
-
-## Troubleshooting
-
-### Mailtrap error: too many emails per second
-You saw:
-```txt
-550 5.7.0 Too many emails per second. Please upgrade your plan
-```
-
-### What this means
-Your workflow run tried to send more messages too quickly for the free sandbox limit.
-
-### Safe fixes
-1. Use **fewer seeded contacts**
-2. Use `--maxAttempts=1`
-3. Only test one run at a time
-4. Create a dedicated SMTP sandbox seeder with 1–2 contacts
-5. Keep log mode as the fallback if Mailtrap free rate limits get in the way
-
----
-
-## Recommended next steps
-
-### Immediate next steps
-1. Keep **log mode** as your stable demo fallback
-2. Use **Mailtrap** as the main visible SMTP proof
-3. Create a **small SMTP sandbox seeder** for 1–2 contacts
-4. Keep using `marketing:complied` manually for compliance proof
-
-### After that
-1. Implement automatic compliance source later:
-   - click tracking
-   - reply tracking
-   - form submit
-2. Add Azure SQL storage adapter
-3. Add Mailchimp adapter when access is ready
-
----
-
-## Why this structure is good for the wider CRM project
-
-This runner is already aligned with the wider CRM goals because it separates:
-
-- **engine logic**
-- **storage implementation**
-- **email provider implementation**
-
-So when the rest of the CRM becomes available:
-- the engine stays
-- storage mapping changes
-- provider adapter changes
-- workflow logic stays intact
-
-That is why the current code structure is useful and not wasted work.
-
----
-
-## Safety notes
-
-- `marketing:reset` is demo-only and guarded by environment checks
-- Do not commit real SMTP credentials
-- Keep provider credentials in local `.env` only
-- Use Mailtrap/Ethereal for safe testing before trying real inbox delivery
-
----
-
-## Suggested command cheat sheet
-
-### Local log demo
-```bash
-php artisan optimize:clear
-php artisan marketing:reset --reseed --force
-php artisan marketing:run --minutes=1 --maxAttempts=3
-php artisan marketing:complied test1@example.com
 php artisan marketing:run --minutes=1 --maxAttempts=3
 ```
 
-### Mailtrap sandbox test
+### What it proves
+This proves:
+- contacts are loaded
+- activity is created
+- attempts are recorded
+- the workflow loop works
+
+### Where to inspect output
+Check:
+- `storage/logs/laravel.log`
+- database tables such as `contact_activities`
+
+---
+
+## Path B — SMTP / Mailtrap sandbox demo
+
+### 1. Set SMTP values in `.env`
+Example structure:
+
+```env
+MAIL_DRIVER_MODE=smtp
+MAIL_MAILER=smtp
+MAIL_HOST=your.smtp.host
+MAIL_PORT=2525
+MAIL_USERNAME=your_username
+MAIL_PASSWORD=your_password
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS="demo@example.com"
+MAIL_FROM_NAME="Marketing Runner"
+```
+
+### 2. Clear config cache
 ```bash
 php artisan optimize:clear
-php artisan marketing:reset --reseed --force
-php artisan marketing:run --minutes=1 --maxAttempts=1
-# check Mailtrap inbox
-php artisan marketing:complied test1@example.com
-php artisan marketing:run --minutes=1 --maxAttempts=1
 ```
+
+### 3. Run the workflow
+```bash
+php artisan marketing:run --minutes=1 --maxAttempts=3
+```
+
+### What it proves
+This proves the send path can work through a real SMTP sandbox.
+
+### Important note
+SMTP sending still does **not** automatically mark compliance.
+
+---
+
+## Manual compliance step for v1.8
+If you want to mark a contact as complied, run:
+
+```bash
+php artisan marketing:complied test1@example.com
+```
+
+### What this does
+It:
+- finds the contact by email
+- finds the latest activity
+- copies the `tracking_id`
+- inserts a compliance engagement row
+- updates contact status fields
+
+### Why this still matters
+Because automatic compliance capture is not yet complete.
+
+---
+
+## Reset the v1.8 demo state
+Run:
+
+```bash
+php artisan marketing:reset --reseed --force
+```
+
+### What this does
+It resets the demo workflow state and reseeds demo contacts so the demo can be reused.
+
+---
+
+# v1.8 SMTP / Mailtrap notes
+
+## What log mode is good for
+- safe demos
+- no real send rate limits
+- no mailbox dependency
+- no risk of sending to real people
+
+## What SMTP sandbox mode is good for
+- showing that the send path is real
+- giving non-technical viewers more confidence
+- comparing provider behavior later
+
+## Limitation
+SMTP sandbox mode still does not equal full workflow compliance capture.
+
+---
+
+# Suggested demo script for showing progress from v1.8 to v2.5
+
+A strong progress explanation is:
+
+## Step 1 — remind them what v1.8 proved
+- local send/wait/check/resend loop
+- activity + engagement tracking
+- log mode / SMTP proof
+
+## Step 2 — explain why v2.5 was started
+- we need something more reusable
+- we need something aligned with long-term CRM workflow architecture
+- we need definition-driven and event-aware workflow logic
+
+## Step 3 — show what v2.5 proves now
+- workflow exists as data
+- version exists as data
+- contact can be enrolled
+- event enters normalized inbox
+- processor reads step graph
+- state changes
+- history is logged
+- action decision is queued
+
+This creates a very strong “v1.8 to v2.5” progress story.
+
+---
+
+# Troubleshooting
+
+## 1. `php artisan migrate` ran old migrations too
+This is normal if all migrations are still inside `database/migrations` and the new DB is empty.
+
+### What it means
+Laravel runs all unapplied migrations for the active DB.
+
+### Is that okay?
+Yes, for this current local dev setup it is acceptable.
+
+---
+
+## 2. `workflow:enroll` says workflow or version not found
+Make sure you seeded the workflow foundation first:
+
+```bash
+php artisan db:seed --class=WorkflowFoundationSeeder
+```
+
+---
+
+## 3. `workflow:event` creates the event but `workflow:process` ignores it
+Check whether:
+- the contact is actually enrolled
+- the enrollment is still `ACTIVE`
+- the event type matches what the current step accepts
+
+---
+
+## 4. `workflow:process` finds no pending events
+Check whether the event row was created with:
+- `ProcessingStatusCode = PENDING`
+
+---
+
+## 5. Antivirus flags the new PHP workflow files
+Some antivirus tools may flag new local PHP command or processor files using generic heuristic names such as `IDP.Generic`.
+
+This is commonly triggered by things like:
+- CLI automation
+- random ID generation
+- DB write loops
+- newly created local scripts with low reputation
+
+If the files are your own local source files and match your repository history, this is usually more likely to be a heuristic false positive than actual malware.
+
+Still, always follow your team or company security policy.
+
+---
+
+# Next recommended development steps after v2.5
+
+The most natural next upgrades are:
+
+## 1. Add `Workflow_Action_Result`
+So action execution history can be recorded separately.
+
+## 2. Add a placeholder action executor
+So queued actions can be visibly “handled” in local development.
+
+## 3. Add a tracked-link prototype
+So click-based workflow events can enter through a more realistic edge.
+
+## 4. Add one more non-terminal sample step
+So the workflow can show a transition that does not immediately end.
+
+## 5. Add richer event states
+Examples:
+- deferred
+- unmapped
+- duplicate
+
+## 6. Later map v2.5 to the wider CRM architecture
+This includes future alignment with:
+- BP provider signals
+- TS score/lifecycle changes
+- YD prediction signals
+- Azure SQL target storage
 
 ---
 
 ## Final note
+This README is intentionally written for the **current v2.5 state** of the branch while still preserving the older v1.8 guide.
 
-This project currently proves three important things:
+The key idea is:
 
-1. The **workflow engine logic works**
-2. The code is already **adaptable** across providers and storage implementations
-3. The runner can be shown in:
-   - **safe demo mode** (log)
-   - **safe SMTP sandbox mode** (Mailtrap)
+- **v1.8** proved the original marketing automation loop
+- **v2.5** proves the first real workflow kernel foundation
 
-That makes it a valid and useful stepping stone toward the full CRM workflow automation system.
+That is the current progress story of this repository.
