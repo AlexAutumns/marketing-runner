@@ -133,7 +133,7 @@ class WorkflowEventProcessor
                 stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
                 stepStatusCode: 'IGNORED',
                 relatedEventId: $event->EventID,
-                message: 'Event was received but not accepted by the current workflow step.',
+                message: 'Event was received, classified, and ignored because the current workflow step does not accept this event type.',
                 details: [
                     'event_type' => $event->EventTypeCode,
                     'current_step' => $currentStepKey,
@@ -151,7 +151,7 @@ class WorkflowEventProcessor
 
             return [
                 'status' => 'ignored',
-                'message' => "Event type not accepted for current step [{$currentStepKey}].",
+                'message' => "Event type [{$event->EventTypeCode}] was ignored because it is not accepted for current step [{$currentStepKey}].",
                 'enrollment_id' => $enrollment->EnrollmentID,
             ];
         }
@@ -182,7 +182,7 @@ class WorkflowEventProcessor
                 stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
                 stepStatusCode: 'COMPLETED',
                 relatedEventId: $event->EventID,
-                message: 'Event accepted and workflow reached a terminal step.',
+                message: 'Event was accepted by the current workflow step, the workflow advanced through the step graph, and the enrollment reached a terminal step.',
                 details: [
                     'event_type' => $event->EventTypeCode,
                     'current_step' => $currentStepKey,
@@ -202,7 +202,7 @@ class WorkflowEventProcessor
 
             return [
                 'status' => 'processed',
-                'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
+                'message' => "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
                 'enrollment_id' => $enrollment->EnrollmentID,
             ];
         }
@@ -226,7 +226,7 @@ class WorkflowEventProcessor
             stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
             stepStatusCode: 'COMPLETED',
             relatedEventId: $event->EventID,
-            message: 'Event accepted and workflow advanced to the next step.',
+            message: 'Event was accepted by the current workflow step and the workflow advanced to the next configured step in the step graph.',
             details: [
                 'event_type' => $event->EventTypeCode,
                 'current_step' => $currentStepKey,
@@ -246,7 +246,7 @@ class WorkflowEventProcessor
 
         return [
             'status' => 'processed',
-            'message' => "Event accepted. Enrollment advanced from [{$currentStepKey}] to [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
+            'message' => "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
             'enrollment_id' => $enrollment->EnrollmentID,
         ];
     }

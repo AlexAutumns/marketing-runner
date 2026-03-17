@@ -28,6 +28,9 @@ class WorkflowFoundationSeeder extends Seeder
             ]
         );
 
+        // The sample workflow version deliberately uses broad, stable event categories
+        // and clearer engagement-oriented event type names so the workflow kernel stays
+        // realistic enough for future integration, while still remaining flexible during development.
         WorkflowVersion::updateOrCreate(
             ['WorkflowVersionID' => 'WFLV_001'],
             [
@@ -38,13 +41,18 @@ class WorkflowFoundationSeeder extends Seeder
                     'start_mode' => 'manual_enrollment',
                 ],
                 'ConditionConfigJson' => [
-                    'notes' => 'Step-aware processing is driven primarily from StepGraphJson in v2 foundation slice.',
+                    'notes' => 'Step-aware processing is driven primarily from StepGraphJson in the workflow-kernel foundation.',
+                    'supported_event_categories' => [
+                        'ENGAGEMENT',
+                        'CAMPAIGN_CONTEXT',
+                        'WORKFLOW_CONTROL',
+                    ],
                 ],
                 'ActionConfigJson' => [
                     'on_step_completion' => [
                         'AWAIT_SIGNAL' => [
                             [
-                                'action_type' => 'SEND_EMAIL',
+                                'action_type' => 'SEND_FOLLOW_UP_EMAIL',
                                 'target_type' => 'CONTACT',
                                 'payload' => [
                                     'template_key' => 'WELCOME_TEMPLATE',
@@ -60,7 +68,16 @@ class WorkflowFoundationSeeder extends Seeder
                         [
                             'key' => 'AWAIT_SIGNAL',
                             'type' => 'WAIT_FOR_EVENT',
-                            'accepted_events' => ['MANUAL_TEST_EVENT', 'EMAIL_CLICK'],
+                            'accepted_categories' => [
+                                'ENGAGEMENT',
+                                'WORKFLOW_CONTROL',
+                            ],
+                            'accepted_events' => [
+                                'MANUAL_TEST_EVENT',
+                                'EMAIL_LINK_CLICKED',
+                                'BROCHURE_LINK_CLICKED',
+                                'FORM_SUBMITTED',
+                            ],
                             'next' => 'COMPLETE',
                             'terminal_on_match' => false,
                         ],
