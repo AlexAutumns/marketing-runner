@@ -35,6 +35,7 @@ class WorkflowEventProcessor
                 $summary['details'][] = [
                     'event_id' => $event->EventID,
                     'event_type' => $event->EventTypeCode,
+                    'event_category' => $event->EventCategoryCode,
                     'contact_id' => $event->ContactID,
                     'result' => $result['status'],
                     'message' => $result['message'],
@@ -49,15 +50,12 @@ class WorkflowEventProcessor
                     $summary['failed']++;
                 }
             } catch (Throwable $e) {
-                $event->update([
-                    'ProcessingStatusCode' => 'FAILED',
-                    'ProcessedAtUTC' => now(),
-                    'ProcessingErrorMessage' => $e->getMessage(),
-                ]);
+                $this->markEventFailed($event, $e->getMessage());
 
                 $summary['details'][] = [
                     'event_id' => $event->EventID,
                     'event_type' => $event->EventTypeCode,
+                    'event_category' => $event->EventCategoryCode,
                     'contact_id' => $event->ContactID,
                     'result' => 'failed',
                     'message' => $e->getMessage(),
@@ -73,140 +71,262 @@ class WorkflowEventProcessor
 
     protected function processEvent(WorkflowEventInbox $event): array
     {
+        $context = $this->resolveProcessingContext($event);
+
+        if (! $context['ok']) {
+            return $context['result'];
+        }
+
+        $stepResolution = $this->resolveCurrentStepContext(
+            version: $context['version'],
+            enrollment: $context['enrollment'],
+            event: $event
+        );
+
+        if (! $stepResolution['ok']) {
+            return $stepResolution['result'];
+        }
+
+        $eventValidation = $this->validateEventAgainstCurrentStep(
+            event: $event,
+            enrollment: $context['enrollment'],
+            currentStepKey: $stepResolution['current_step_key'],
+            currentStep: $stepResolution['current_step']
+        );
+
+        if (! $eventValidation['ok']) {
+            return $eventValidation['result'];
+        }
+
+        return $this->applyStepTransition(
+            event: $event,
+            enrollment: $context['enrollment'],
+            version: $context['version'],
+            currentStepKey: $stepResolution['current_step_key'],
+            currentStep: $stepResolution['current_step'],
+            stepGraph: $stepResolution['step_graph'],
+            actionConfig: $stepResolution['action_config']
+        );
+    }
+
+    protected function resolveProcessingContext(WorkflowEventInbox $event): array
+    {
         $enrollment = $this->resolveEnrollment($event);
 
         if (! $enrollment) {
-            $event->update([
-                'ProcessingStatusCode' => 'IGNORED',
-                'ProcessedAtUTC' => now(),
-                'ProcessingErrorMessage' => 'No matching enrollment found.',
-            ]);
+            $this->markEventIgnored(
+                event: $event,
+                message: 'No matching enrollment found.'
+            );
 
             return [
-                'status' => 'ignored',
-                'message' => 'No matching active enrollment found.',
-                'enrollment_id' => null,
+                'ok' => false,
+                'result' => $this->ignoredResult(
+                    event: $event,
+                    message: 'No matching active enrollment found.',
+                    enrollmentId: null
+                ),
             ];
         }
 
         $version = WorkflowVersion::find($enrollment->WorkflowVersionID);
 
         if (! $version) {
-            $event->update([
-                'ProcessingStatusCode' => 'FAILED',
-                'ProcessedAtUTC' => now(),
-                'ProcessingErrorMessage' => 'Workflow version not found.',
-            ]);
+            $this->markEventFailed(
+                event: $event,
+                message: 'Workflow version not found.'
+            );
 
             return [
-                'status' => 'failed',
-                'message' => 'Workflow version not found.',
-                'enrollment_id' => $enrollment->EnrollmentID,
+                'ok' => false,
+                'result' => $this->failedResult(
+                    event: $event,
+                    message: 'Workflow version not found.',
+                    enrollmentId: $enrollment->EnrollmentID
+                ),
             ];
         }
 
+        return [
+            'ok' => true,
+            'enrollment' => $enrollment,
+            'version' => $version,
+        ];
+    }
+
+    protected function resolveCurrentStepContext(
+        WorkflowVersion $version,
+        WorkflowEnrollment $enrollment,
+        WorkflowEventInbox $event
+    ): array {
         $stepGraph = $version->StepGraphJson ?? [];
-        $currentStepKey = $enrollment->CurrentStepKey ?: $this->getInitialStepKey($stepGraph);
-        $currentStep = $this->getStepDefinition($stepGraph, $currentStepKey);
         $actionConfig = $version->ActionConfigJson ?? [];
 
+        $currentStepKey = $enrollment->CurrentStepKey ?: $this->getInitialStepKey($stepGraph);
+        $currentStep = $this->getStepDefinition($stepGraph, $currentStepKey);
+
         if (! $currentStep) {
-            $event->update([
-                'ProcessingStatusCode' => 'FAILED',
-                'ProcessedAtUTC' => now(),
-                'ProcessingErrorMessage' => 'Current workflow step definition could not be resolved.',
-            ]);
+            $this->markEventFailed(
+                event: $event,
+                message: 'Current workflow step definition could not be resolved.'
+            );
 
             return [
-                'status' => 'failed',
-                'message' => 'Current workflow step definition could not be resolved.',
-                'enrollment_id' => $enrollment->EnrollmentID,
+                'ok' => false,
+                'result' => $this->failedResult(
+                    event: $event,
+                    message: 'Current workflow step definition could not be resolved.',
+                    enrollmentId: $enrollment->EnrollmentID
+                ),
             ];
         }
 
+        return [
+            'ok' => true,
+            'step_graph' => $stepGraph,
+            'action_config' => $actionConfig,
+            'current_step_key' => $currentStepKey,
+            'current_step' => $currentStep,
+        ];
+    }
+
+    protected function validateEventAgainstCurrentStep(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment,
+        string $currentStepKey,
+        array $currentStep
+    ): array {
         $acceptedEvents = $currentStep['accepted_events'] ?? [];
 
         if (! in_array($event->EventTypeCode, $acceptedEvents, true)) {
             $this->writeStepLog(
                 enrollment: $enrollment,
-                stepKey: $currentStepKey ?? 'UNKNOWN',
+                stepKey: $currentStepKey,
                 stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
                 stepStatusCode: 'IGNORED',
                 relatedEventId: $event->EventID,
                 message: 'Event was received, classified, and ignored because the current workflow step does not accept this event type.',
                 details: [
                     'event_type' => $event->EventTypeCode,
+                    'event_category' => $event->EventCategoryCode,
                     'current_step' => $currentStepKey,
+                    'accepted_categories' => $currentStep['accepted_categories'] ?? [],
                     'accepted_events' => $acceptedEvents,
                 ]
             );
 
-            $event->update([
-                'WorkflowID' => $enrollment->WorkflowID,
-                'WorkflowVersionID' => $enrollment->WorkflowVersionID,
-                'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
-                'ProcessingStatusCode' => 'IGNORED',
-                'ProcessedAtUTC' => now(),
-            ]);
+            $this->markEventProcessedAsIgnored(
+                event: $event,
+                enrollment: $enrollment
+            );
 
             return [
-                'status' => 'ignored',
-                'message' => "Event type [{$event->EventTypeCode}] was ignored because it is not accepted for current step [{$currentStepKey}].",
-                'enrollment_id' => $enrollment->EnrollmentID,
+                'ok' => false,
+                'result' => $this->ignoredResult(
+                    event: $event,
+                    message: "Event type [{$event->EventTypeCode}] was ignored because it is not accepted for current step [{$currentStepKey}].",
+                    enrollmentId: $enrollment->EnrollmentID
+                ),
             ];
         }
 
+        return ['ok' => true];
+    }
+
+    protected function applyStepTransition(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment,
+        WorkflowVersion $version,
+        string $currentStepKey,
+        array $currentStep,
+        array $stepGraph,
+        array $actionConfig
+    ): array {
         $nextStepKey = $currentStep['next'] ?? null;
         $nextStep = $this->getStepDefinition($stepGraph, $nextStepKey);
         $isTerminal = (bool) ($nextStep['terminal'] ?? false);
 
         if ($isTerminal) {
-            $enrollment->update([
-                'EnrollmentStatusCode' => 'COMPLETED',
-                'CurrentStepKey' => $nextStepKey,
-                'CompletedReasonCode' => 'STEP_GRAPH_TERMINAL_REACHED',
-                'LastEventID' => $event->EventID,
-                'CompletedAtUTC' => now(),
-            ]);
-
-            $queuedActionIds = $this->queueStepActions(
-                enrollment: $enrollment,
+            return $this->applyTerminalTransition(
                 event: $event,
-                actionConfig: $actionConfig,
-                stepKey: $currentStepKey
-            );
-
-            $this->writeStepLog(
                 enrollment: $enrollment,
-                stepKey: $currentStepKey,
-                stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
-                stepStatusCode: 'COMPLETED',
-                relatedEventId: $event->EventID,
-                message: 'Event was accepted by the current workflow step, the workflow advanced through the step graph, and the enrollment reached a terminal step.',
-                details: [
-                    'event_type' => $event->EventTypeCode,
-                    'current_step' => $currentStepKey,
-                    'next_step' => $nextStepKey,
-                    'terminal' => true,
-                    'queued_action_ids' => $queuedActionIds,
-                ]
+                currentStepKey: $currentStepKey,
+                currentStep: $currentStep,
+                nextStepKey: $nextStepKey,
+                actionConfig: $actionConfig
             );
-
-            $event->update([
-                'WorkflowID' => $enrollment->WorkflowID,
-                'WorkflowVersionID' => $enrollment->WorkflowVersionID,
-                'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
-                'ProcessingStatusCode' => 'PROCESSED',
-                'ProcessedAtUTC' => now(),
-            ]);
-
-            return [
-                'status' => 'processed',
-                'message' => "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
-                'enrollment_id' => $enrollment->EnrollmentID,
-            ];
         }
 
+        return $this->applyNonTerminalTransition(
+            event: $event,
+            enrollment: $enrollment,
+            currentStepKey: $currentStepKey,
+            currentStep: $currentStep,
+            nextStepKey: $nextStepKey,
+            actionConfig: $actionConfig
+        );
+    }
+
+    protected function applyTerminalTransition(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment,
+        string $currentStepKey,
+        array $currentStep,
+        ?string $nextStepKey,
+        array $actionConfig
+    ): array {
+        $enrollment->update([
+            'EnrollmentStatusCode' => 'COMPLETED',
+            'CurrentStepKey' => $nextStepKey,
+            'CompletedReasonCode' => 'STEP_GRAPH_TERMINAL_REACHED',
+            'LastEventID' => $event->EventID,
+            'CompletedAtUTC' => now(),
+        ]);
+
+        $queuedActionIds = $this->queueStepActions(
+            enrollment: $enrollment,
+            event: $event,
+            actionConfig: $actionConfig,
+            stepKey: $currentStepKey
+        );
+
+        $this->writeStepLog(
+            enrollment: $enrollment,
+            stepKey: $currentStepKey,
+            stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
+            stepStatusCode: 'COMPLETED',
+            relatedEventId: $event->EventID,
+            message: 'Event was accepted by the current workflow step, the workflow advanced through the step graph, and the enrollment reached a terminal step.',
+            details: [
+                'event_type' => $event->EventTypeCode,
+                'event_category' => $event->EventCategoryCode,
+                'current_step' => $currentStepKey,
+                'next_step' => $nextStepKey,
+                'terminal' => true,
+                'queued_action_ids' => $queuedActionIds,
+            ]
+        );
+
+        $this->markEventProcessed(
+            event: $event,
+            enrollment: $enrollment
+        );
+
+        return $this->processedResult(
+            event: $event,
+            message: "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
+            enrollmentId: $enrollment->EnrollmentID
+        );
+    }
+
+    protected function applyNonTerminalTransition(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment,
+        string $currentStepKey,
+        array $currentStep,
+        ?string $nextStepKey,
+        array $actionConfig
+    ): array {
         $enrollment->update([
             'CurrentStepKey' => $nextStepKey,
             'LastEventID' => $event->EventID,
@@ -229,6 +349,7 @@ class WorkflowEventProcessor
             message: 'Event was accepted by the current workflow step and the workflow advanced to the next configured step in the step graph.',
             details: [
                 'event_type' => $event->EventTypeCode,
+                'event_category' => $event->EventCategoryCode,
                 'current_step' => $currentStepKey,
                 'next_step' => $nextStepKey,
                 'terminal' => false,
@@ -236,19 +357,16 @@ class WorkflowEventProcessor
             ]
         );
 
-        $event->update([
-            'WorkflowID' => $enrollment->WorkflowID,
-            'WorkflowVersionID' => $enrollment->WorkflowVersionID,
-            'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
-            'ProcessingStatusCode' => 'PROCESSED',
-            'ProcessedAtUTC' => now(),
-        ]);
+        $this->markEventProcessed(
+            event: $event,
+            enrollment: $enrollment
+        );
 
-        return [
-            'status' => 'processed',
-            'message' => "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
-            'enrollment_id' => $enrollment->EnrollmentID,
-        ];
+        return $this->processedResult(
+            event: $event,
+            message: "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
+            enrollmentId: $enrollment->EnrollmentID
+        );
     }
 
     protected function resolveEnrollment(WorkflowEventInbox $event): ?WorkflowEnrollment
@@ -260,6 +378,86 @@ class WorkflowEventProcessor
         return WorkflowEnrollment::where('ContactID', $event->ContactID)
             ->where('EnrollmentStatusCode', 'ACTIVE')
             ->first();
+    }
+
+    protected function markEventFailed(WorkflowEventInbox $event, string $message): void
+    {
+        $event->update([
+            'ProcessingStatusCode' => 'FAILED',
+            'ProcessedAtUTC' => now(),
+            'ProcessingErrorMessage' => $message,
+        ]);
+    }
+
+    protected function markEventIgnored(WorkflowEventInbox $event, string $message): void
+    {
+        $event->update([
+            'ProcessingStatusCode' => 'IGNORED',
+            'ProcessedAtUTC' => now(),
+            'ProcessingErrorMessage' => $message,
+        ]);
+    }
+
+    protected function markEventProcessedAsIgnored(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment
+    ): void {
+        $event->update([
+            'WorkflowID' => $enrollment->WorkflowID,
+            'WorkflowVersionID' => $enrollment->WorkflowVersionID,
+            'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
+            'ProcessingStatusCode' => 'IGNORED',
+            'ProcessedAtUTC' => now(),
+        ]);
+    }
+
+    protected function markEventProcessed(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment
+    ): void {
+        $event->update([
+            'WorkflowID' => $enrollment->WorkflowID,
+            'WorkflowVersionID' => $enrollment->WorkflowVersionID,
+            'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
+            'ProcessingStatusCode' => 'PROCESSED',
+            'ProcessedAtUTC' => now(),
+        ]);
+    }
+
+    protected function ignoredResult(
+        WorkflowEventInbox $event,
+        string $message,
+        ?string $enrollmentId
+    ): array {
+        return [
+            'status' => 'ignored',
+            'message' => $message,
+            'enrollment_id' => $enrollmentId,
+        ];
+    }
+
+    protected function failedResult(
+        WorkflowEventInbox $event,
+        string $message,
+        ?string $enrollmentId
+    ): array {
+        return [
+            'status' => 'failed',
+            'message' => $message,
+            'enrollment_id' => $enrollmentId,
+        ];
+    }
+
+    protected function processedResult(
+        WorkflowEventInbox $event,
+        string $message,
+        ?string $enrollmentId
+    ): array {
+        return [
+            'status' => 'processed',
+            'message' => $message,
+            'enrollment_id' => $enrollmentId,
+        ];
     }
 
     protected function writeStepLog(
