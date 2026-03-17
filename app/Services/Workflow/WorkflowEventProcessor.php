@@ -10,8 +10,44 @@ use App\Models\WorkflowVersion;
 use Illuminate\Support\Str;
 use Throwable;
 
+/**
+ * WorkflowEventProcessor is the workflow-kernel orchestration service.
+ *
+ * It is intentionally responsible for coordinating workflow event handling,
+ * not for owning every surrounding domain in the CRM.
+ *
+ * Its main responsibilities are:
+ * - read pending workflow-facing events
+ * - resolve workflow runtime context
+ * - interpret an event against the current workflow step
+ * - move workflow state forward through the step graph
+ * - write workflow history
+ * - queue follow-up workflow actions
+ *
+ * Important design boundary:
+ * - this class interprets and orchestrates workflow behavior
+ * - it does not execute provider actions directly
+ * - it does not build campaigns
+ * - it does not own external scoring logic
+ *
+ * Keep the core logic here durable and readable.
+ * Flexible upstream/downstream integrations should connect through:
+ * - workflow event inbox (inputs)
+ * - workflow action queue (outputs)
+ */
 class WorkflowEventProcessor
 {
+    /**
+     * Process all currently pending workflow events in arrival order.
+     *
+     * This method is intentionally kept as the batch coordinator:
+     * - it loads the pending inbox rows
+     * - it delegates one-event handling to processEvent()
+     * - it aggregates operator-friendly summary output
+     *
+     * The detailed workflow decision-making should stay below this layer.
+     * This helps keep batch processing readable and easier to support.
+     */
     public function processPendingEvents(): array
     {
         $summary = [
@@ -69,6 +105,19 @@ class WorkflowEventProcessor
         return $summary;
     }
 
+    /**
+     * Process one workflow-facing event through the workflow kernel.
+     *
+     * This method is intentionally written as an orchestrator, not as one large
+     * block of mixed logic. Its flow is:
+     * 1. resolve processing context
+     * 2. resolve current workflow step context
+     * 3. validate the event against the current step
+     * 4. apply the step transition
+     *
+     * Keeping this method high-level makes the workflow path easier to understand,
+     * review, and extend without silently breaking the core behavior.
+     */
     protected function processEvent(WorkflowEventInbox $event): array
     {
         $context = $this->resolveProcessingContext($event);
@@ -109,6 +158,19 @@ class WorkflowEventProcessor
         );
     }
 
+    /**
+     * Resolve the minimum workflow runtime context needed to process an event.
+     *
+     * Current required context:
+     * - the matching workflow enrollment/run
+     * - the workflow version used by that enrollment
+     *
+     * If either cannot be resolved, processing stops early and the event is marked
+     * as ignored or failed, depending on the reason.
+     *
+     * This method exists to keep context-resolution failures separate from
+     * step-interpretation logic.
+     */
     protected function resolveProcessingContext(WorkflowEventInbox $event): array
     {
         $enrollment = $this->resolveEnrollment($event);
@@ -154,11 +216,25 @@ class WorkflowEventProcessor
         ];
     }
 
+    /**
+     * Resolve the current workflow step context from the workflow version and
+     * the enrollment's current runtime position.
+     *
+     * This method loads:
+     * - the step graph
+     * - the action configuration
+     * - the current step key
+     * - the current step definition
+     *
+     * The processor depends on this step-aware context so that workflow behavior
+     * is driven by the stored workflow version, not by hardcoded branching rules.
+     */
     protected function resolveCurrentStepContext(
         WorkflowVersion $version,
         WorkflowEnrollment $enrollment,
         WorkflowEventInbox $event
     ): array {
+        // The workflow version is the source of truth for step flow and action intent.
         $stepGraph = $version->StepGraphJson ?? [];
         $actionConfig = $version->ActionConfigJson ?? [];
 
@@ -190,12 +266,27 @@ class WorkflowEventProcessor
         ];
     }
 
+    /**
+     * Check whether the current workflow step accepts the incoming event.
+     *
+     * Important design note:
+     * - event categories are intentionally broad and stable
+     * - event types are more specific and are used for current step matching
+     *
+     * At this stage, the processor matches by accepted event types, not by
+     * category alone. That is intentional:
+     * category helps keep the event model structured,
+     * while event type keeps the workflow behavior precise.
+     *
+     * This balance supports flexible edges without making step behavior too vague.
+     */
     protected function validateEventAgainstCurrentStep(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment,
         string $currentStepKey,
         array $currentStep
     ): array {
+        // Categories keep the event model structured; step matching still stays event-type specific.
         $acceptedEvents = $currentStep['accepted_events'] ?? [];
 
         if (! in_array($event->EventTypeCode, $acceptedEvents, true)) {
@@ -233,6 +324,17 @@ class WorkflowEventProcessor
         return ['ok' => true];
     }
 
+    /**
+     * Apply the workflow transition after an event has been accepted for the
+     * current step.
+     *
+     * This method decides whether the workflow advances into:
+     * - a terminal step (completing the enrollment), or
+     * - a non-terminal step (continuing the workflow run)
+     *
+     * The actual update behavior is split into dedicated terminal and
+     * non-terminal handlers to keep each transition path readable.
+     */
     protected function applyStepTransition(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment,
@@ -267,6 +369,19 @@ class WorkflowEventProcessor
         );
     }
 
+    /**
+     * Apply a terminal workflow transition.
+     *
+     * Terminal transitions:
+     * - complete the workflow enrollment/run
+     * - write a step log explaining the transition
+     * - queue any configured follow-up actions for the completed step
+     * - mark the event as processed in workflow context
+     *
+     * Even when a workflow run completes, action queue output stays separate from
+     * action execution. This preserves the boundary between workflow decision and
+     * external execution.
+     */
     protected function applyTerminalTransition(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment,
@@ -319,6 +434,19 @@ class WorkflowEventProcessor
         );
     }
 
+    /**
+     * Apply a non-terminal workflow transition.
+     *
+     * Non-terminal transitions:
+     * - move the enrollment/run to the next workflow step
+     * - keep the workflow run active
+     * - write step history
+     * - queue any configured follow-up actions for the completed step
+     * - mark the event as processed in workflow context
+     *
+     * This keeps step progression and follow-up intent explicit while preserving
+     * the current state/history/action separation in the workflow kernel.
+     */
     protected function applyNonTerminalTransition(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment,
@@ -380,6 +508,9 @@ class WorkflowEventProcessor
             ->first();
     }
 
+    /**
+     * Mark an event as failed when processing cannot continue safely.
+     */
     protected function markEventFailed(WorkflowEventInbox $event, string $message): void
     {
         $event->update([
@@ -389,6 +520,10 @@ class WorkflowEventProcessor
         ]);
     }
 
+    /**
+     * Mark an event as ignored when it is valid enough to record, but not usable
+     * for the current workflow processing path.
+     */
     protected function markEventIgnored(WorkflowEventInbox $event, string $message): void
     {
         $event->update([
@@ -398,6 +533,12 @@ class WorkflowEventProcessor
         ]);
     }
 
+    /**
+     * Mark an event as ignored while still attaching resolved workflow context.
+     *
+     * This is useful when the event reached a valid workflow run, but the current
+     * step chose not to act on that event type.
+     */
     protected function markEventProcessedAsIgnored(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment
@@ -411,6 +552,10 @@ class WorkflowEventProcessor
         ]);
     }
 
+    /**
+     * Mark an event as successfully processed and attach the resolved workflow
+     * context used during processing.
+     */
     protected function markEventProcessed(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment
@@ -484,6 +629,9 @@ class WorkflowEventProcessor
         ]);
     }
 
+    /**
+     * Find one step definition inside the stored workflow step graph by key.
+     */
     protected function getStepDefinition(array $stepGraph, ?string $stepKey): ?array
     {
         if (! $stepKey) {
@@ -501,11 +649,25 @@ class WorkflowEventProcessor
         return null;
     }
 
+    /**
+     * Return the configured initial step key from the stored workflow step graph.
+     */
     protected function getInitialStepKey(array $stepGraph): ?string
     {
         return $stepGraph['initial_step'] ?? null;
     }
 
+    /**
+     * Queue workflow-configured actions for a completed step.
+     *
+     * Important design boundary:
+     * this method records action intent only.
+     * It does not execute provider calls or external side effects directly.
+     *
+     * Keeping action intent in the workflow action queue makes the workflow core
+     * easier to test, safer to evolve, and easier to integrate with other teams'
+     * execution paths later.
+     */
     protected function queueStepActions(
         WorkflowEnrollment $enrollment,
         WorkflowEventInbox $event,
