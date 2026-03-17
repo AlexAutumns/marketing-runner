@@ -45,6 +45,10 @@ class EnrollWorkflowContact extends Command
         }
 
         $this->info("Validated workflow definition: {$workflow->WorkflowName} ({$workflow->WorkflowKey})");
+        $this->line('Workflow MarketingCampaignID : '.($workflow->MarketingCampaignID ?: '[none]'));
+        $this->line('Workflow CampaignTemplateID  : '.($workflow->CampaignTemplateID ?: '[none]'));
+        $this->line('Workflow ObjectiveCode       : '.($workflow->ObjectiveCode ?: '[none]'));
+        $this->line('Workflow PlatformCode        : '.($workflow->PlatformCode ?: '[none]'));
 
         // 2. Validate workflow version
         $version = WorkflowVersion::find($workflowVersionId);

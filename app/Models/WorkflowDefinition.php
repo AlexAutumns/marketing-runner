@@ -15,6 +15,15 @@ class WorkflowDefinition extends Model
 
     protected $keyType = 'string';
 
+    /**
+     * WorkflowDefinition is the stable workflow master record.
+     *
+     * It stores the workflow identity and lightweight campaign context,
+     * but it should not become a duplicate of the campaign-builder domain.
+     *
+     * Keep only the campaign fields that the workflow genuinely needs
+     * for identification, routing, filtering, and explainability.
+     */
     protected $fillable = [
         'WorkflowID',
         'WorkflowKey',
@@ -23,6 +32,10 @@ class WorkflowDefinition extends Model
         'WorkflowDescription',
         'WorkflowStatusCode',
         'OwnerModule',
+        'MarketingCampaignID',
+        'CampaignTemplateID',
+        'ObjectiveCode',
+        'PlatformCode',
         'IsReusable',
         'IsSystem',
     ];
