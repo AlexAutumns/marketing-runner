@@ -150,7 +150,6 @@ class WorkflowEventProcessor
         return $this->applyStepTransition(
             event: $event,
             enrollment: $context['enrollment'],
-            version: $context['version'],
             currentStepKey: $stepResolution['current_step_key'],
             currentStep: $stepResolution['current_step'],
             stepGraph: $stepResolution['step_graph'],
@@ -184,7 +183,6 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->ignoredResult(
-                    event: $event,
                     message: 'No matching active enrollment found.',
                     enrollmentId: null
                 ),
@@ -202,7 +200,6 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->failedResult(
-                    event: $event,
                     message: 'Workflow version not found.',
                     enrollmentId: $enrollment->EnrollmentID
                 ),
@@ -250,7 +247,6 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->failedResult(
-                    event: $event,
                     message: 'Current workflow step definition could not be resolved.',
                     enrollmentId: $enrollment->EnrollmentID
                 ),
@@ -314,7 +310,6 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->ignoredResult(
-                    event: $event,
                     message: "Event type [{$event->EventTypeCode}] was ignored because it is not accepted for current step [{$currentStepKey}].",
                     enrollmentId: $enrollment->EnrollmentID
                 ),
@@ -338,7 +333,6 @@ class WorkflowEventProcessor
     protected function applyStepTransition(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment,
-        WorkflowVersion $version,
         string $currentStepKey,
         array $currentStep,
         array $stepGraph,
@@ -428,7 +422,6 @@ class WorkflowEventProcessor
         );
 
         return $this->processedResult(
-            event: $event,
             message: "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
             enrollmentId: $enrollment->EnrollmentID
         );
@@ -570,7 +563,6 @@ class WorkflowEventProcessor
     }
 
     protected function ignoredResult(
-        WorkflowEventInbox $event,
         string $message,
         ?string $enrollmentId
     ): array {
@@ -582,7 +574,6 @@ class WorkflowEventProcessor
     }
 
     protected function failedResult(
-        WorkflowEventInbox $event,
         string $message,
         ?string $enrollmentId
     ): array {
@@ -594,7 +585,6 @@ class WorkflowEventProcessor
     }
 
     protected function processedResult(
-        WorkflowEventInbox $event,
         string $message,
         ?string $enrollmentId
     ): array {

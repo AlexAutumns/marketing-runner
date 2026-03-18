@@ -86,8 +86,8 @@ class InjectWorkflowEvent extends Command
             : $this->inferDefaultCategory($eventType);
 
         $this->newLine();
-        $this->info('WORKFLOW EVENT INJECTION');
-        $this->line(str_repeat('-', 60));
+        $this->info('WORKFLOW EVENT COMMAND');
+        $this->line(str_repeat('-', 70));
         $this->line("Input EventTypeCode     : {$eventType}");
         $this->line("Input ContactID         : {$contactId}");
         $this->line('Input WorkflowID        : '.($workflowId ?: '[none]'));
@@ -97,7 +97,7 @@ class InjectWorkflowEvent extends Command
         $this->line("Input EventSourceCode   : {$source}");
         $this->line("Input EventCategoryCode : {$category}");
         $this->line('Input CorrelationKey    : '.($correlationKey ?: '[none]'));
-        $this->line(str_repeat('-', 60));
+        $this->line(str_repeat('-', 70));
 
         // Category validation is intentionally strict because categories are meant to
         // stay stable. Event-type validation is softer so upstream teams can evolve
@@ -109,6 +109,8 @@ class InjectWorkflowEvent extends Command
             return self::FAILURE;
         }
 
+        // Unknown event types are allowed with a warning so upstream integrations
+        // can evolve without immediately blocking workflow-event intake work.
         if (! $this->isAllowedEventType($eventType)) {
             $this->warn("EventTypeCode [{$eventType}] is not in the current known event-type list.");
             $this->line('Known event types: '.implode(', ', self::ALLOWED_EVENT_TYPES));
@@ -140,10 +142,10 @@ class InjectWorkflowEvent extends Command
         $this->line('OccurredAtUTC           : '.$event->OccurredAtUTC?->toDateTimeString());
         $this->line("Stored EventCategory    : {$event->EventCategoryCode}");
 
-        $this->line(str_repeat('-', 60));
-        $this->comment('Next suggested step: process pending workflow events');
+        $this->line(str_repeat('-', 70));
+        $this->comment('Next recommended command: workflow:process');
         $this->comment('Example: php artisan workflow:process');
-        $this->line(str_repeat('-', 60));
+        $this->line(str_repeat('-', 70));
 
         return self::SUCCESS;
     }

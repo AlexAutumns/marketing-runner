@@ -19,7 +19,7 @@ class ProcessWorkflowEvents extends Command
 
         $result = $processor->processPendingEvents();
 
-        $this->line('Pending events found : '.$result['total_pending']);
+        $this->line('Pending workflow events : '.$result['total_pending']);
         $this->line(str_repeat('-', 70));
 
         if (! empty($result['details'])) {
@@ -38,7 +38,7 @@ class ProcessWorkflowEvents extends Command
             $this->line(str_repeat('-', 70));
         }
 
-        $this->info('Processing summary');
+        $this->info('Workflow processing summary');
         $this->line('Processed : '.$result['processed']);
         $this->line('Ignored   : '.$result['ignored']);
         $this->line('Failed    : '.$result['failed']);

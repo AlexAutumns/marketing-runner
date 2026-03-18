@@ -72,7 +72,7 @@ class WorkflowFoundationSeeder extends Seeder
                     ],
                 ],
 
-                // / ActionConfigJson stores workflow-decided action intent at configuration level.
+                // ActionConfigJson stores workflow-decided action intent at configuration level.
                 // The processor reads this config and writes action queue rows, but it does not
                 // execute external side effects directly.
                 'ActionConfigJson' => [

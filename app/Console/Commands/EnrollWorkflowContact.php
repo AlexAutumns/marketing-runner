@@ -39,13 +39,16 @@ class EnrollWorkflowContact extends Command
         $companyId = $this->option('companyId');
 
         $this->newLine();
-        $this->info('WORKFLOW ENROLLMENT');
-        $this->line(str_repeat('-', 60));
+        $this->info('WORKFLOW ENROLLMENT COMMAND');
+        $this->line(str_repeat('-', 70));
         $this->line("Input ContactID        : {$contactId}");
         $this->line("Input WorkflowID       : {$workflowId}");
         $this->line("Input WorkflowVersionID: {$workflowVersionId}");
         $this->line('Input CompanyID        : '.($companyId ?: '[none]'));
-        $this->line(str_repeat('-', 60));
+        $this->line(str_repeat('-', 70));
+
+        // Missing workflow structure is a hard failure because enrollment should never
+        // create runtime state against unresolved workflow identity or version context.
 
         // 1. Validate workflow definition
         $workflow = WorkflowDefinition::find($workflowId);
@@ -143,10 +146,10 @@ class EnrollWorkflowContact extends Command
         $this->info('Initial step log written.');
         $this->line("StepLogID              : {$stepLogId}");
 
-        $this->line(str_repeat('-', 60));
-        $this->comment('Next suggested step: inject an event using workflow:event');
+        $this->line(str_repeat('-', 70));
+        $this->comment('Next recommended command: workflow:event');
         $this->comment("Example: php artisan workflow:event MANUAL_TEST_EVENT {$contactId} --workflowId={$workflowId} --workflowVersionId={$workflowVersionId} --enrollmentId={$enrollmentId}");
-        $this->line(str_repeat('-', 60));
+        $this->line(str_repeat('-', 70));
 
         return self::SUCCESS;
     }
