@@ -6,6 +6,21 @@ use App\Models\WorkflowEventInbox;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 
+/**
+ * Development and operations command for inserting workflow-facing events
+ * into the workflow event inbox.
+ *
+ * This command is intentionally not limited to one exact upstream system.
+ * It exists to support:
+ * - local workflow-kernel testing
+ * - controlled demo flows
+ * - future integration shaping
+ *
+ * Important boundary:
+ * this command creates workflow-facing intake records.
+ * It does not interpret the workflow outcome itself.
+ * Interpretation belongs to the workflow processor.
+ */
 class InjectWorkflowEvent extends Command
 {
     protected $signature = 'workflow:event
@@ -26,6 +41,8 @@ class InjectWorkflowEvent extends Command
      *
      * These are intentionally broad so the workflow core stays resilient even if
      * surrounding apps and teams adjust their exact event-type vocabulary later.
+     * These categories are intentionally broad because upstream systems may evolve,
+     * but the workflow core still needs a durable way to group event meaning.
      */
     private const ALLOWED_EVENT_CATEGORIES = [
         'ENGAGEMENT',
@@ -34,10 +51,11 @@ class InjectWorkflowEvent extends Command
     ];
 
     /**
-     * Known event types currently supported in the sample workflow/demo flow.
+     * Known event types currently used by the workflow-kernel branch.
      *
-     * This list is intentionally small and explicit for now to keep the event
-     * contract readable and controlled during early integration work.
+     * This list is intentionally explicit so the branch stays readable and easier
+     * to align with evolving upstream systems. Unknown event types may still be
+     * accepted with a warning so integration work remains flexible.
      */
     private const ALLOWED_EVENT_TYPES = [
         'MANUAL_TEST_EVENT',
@@ -81,6 +99,9 @@ class InjectWorkflowEvent extends Command
         $this->line('Input CorrelationKey    : '.($correlationKey ?: '[none]'));
         $this->line(str_repeat('-', 60));
 
+        // Category validation is intentionally strict because categories are meant to
+        // stay stable. Event-type validation is softer so upstream teams can evolve
+        // their exact event names without immediately blocking workflow intake work.
         if (! $this->isAllowedCategory($category)) {
             $this->error("Validation failed: EventCategoryCode [{$category}] is not currently supported.");
             $this->line('Allowed categories: '.implode(', ', self::ALLOWED_EVENT_CATEGORIES));
@@ -127,6 +148,12 @@ class InjectWorkflowEvent extends Command
         return self::SUCCESS;
     }
 
+    /**
+     * Infer a reasonable default category from a known event type.
+     *
+     * This keeps CLI usage practical while still encouraging category discipline.
+     * Operators can override the category explicitly when needed.
+     */
     protected function inferDefaultCategory(string $eventType): string
     {
         return match ($eventType) {

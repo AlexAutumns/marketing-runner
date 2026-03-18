@@ -9,6 +9,18 @@ use App\Models\WorkflowVersion;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 
+/**
+ * Enroll a contact into a workflow version by creating the workflow runtime
+ * state record for that contact.
+ *
+ * This command is the bridge between:
+ * - stored workflow definition/version data
+ * and
+ * - a live workflow run for one contact
+ *
+ * It does not execute workflow processing itself.
+ * It creates the initial runtime entry point that later events can act on.
+ */
 class EnrollWorkflowContact extends Command
 {
     protected $signature = 'workflow:enroll
@@ -71,6 +83,8 @@ class EnrollWorkflowContact extends Command
         $this->info('Validated workflow-version relationship.');
 
         // 4. Check if the contact already has an active enrollment in this workflow version
+        // A contact should not silently receive duplicate active-like runs for the
+        // same workflow version unless that behavior is intentionally designed later.
         $existingEnrollment = WorkflowEnrollment::where('ContactID', $contactId)
             ->where('WorkflowID', $workflowId)
             ->where('WorkflowVersionID', $workflowVersionId)
