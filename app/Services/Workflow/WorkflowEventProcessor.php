@@ -183,6 +183,7 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->ignoredResult(
+                    event: $event,
                     message: 'No matching active enrollment found.',
                     enrollmentId: null
                 ),
@@ -200,6 +201,7 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->failedResult(
+                    event: $event,
                     message: 'Workflow version not found.',
                     enrollmentId: $enrollment->EnrollmentID
                 ),
@@ -310,6 +312,7 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->ignoredResult(
+                    event: $event,
                     message: "Event type [{$event->EventTypeCode}] was ignored because it is not accepted for current step [{$currentStepKey}].",
                     enrollmentId: $enrollment->EnrollmentID
                 ),
@@ -422,6 +425,7 @@ class WorkflowEventProcessor
         );
 
         return $this->processedResult(
+            event: $event,
             message: "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced to terminal step [{$nextStepKey}] and queued ".count($queuedActionIds).' action(s).',
             enrollmentId: $enrollment->EnrollmentID
         );
@@ -563,34 +567,43 @@ class WorkflowEventProcessor
     }
 
     protected function ignoredResult(
+        WorkflowEventInbox $event,
         string $message,
         ?string $enrollmentId
     ): array {
         return [
             'status' => 'ignored',
             'message' => $message,
+            'event_id' => $event->EventID,
+            'event_type' => $event->EventTypeCode,
             'enrollment_id' => $enrollmentId,
         ];
     }
 
     protected function failedResult(
+        WorkflowEventInbox $event,
         string $message,
         ?string $enrollmentId
     ): array {
         return [
             'status' => 'failed',
             'message' => $message,
+            'event_id' => $event->EventID,
+            'event_type' => $event->EventTypeCode,
             'enrollment_id' => $enrollmentId,
         ];
     }
 
     protected function processedResult(
+        WorkflowEventInbox $event,
         string $message,
         ?string $enrollmentId
     ): array {
         return [
             'status' => 'processed',
             'message' => $message,
+            'event_id' => $event->EventID,
+            'event_type' => $event->EventTypeCode,
             'enrollment_id' => $enrollmentId,
         ];
     }

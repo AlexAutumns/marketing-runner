@@ -64,7 +64,7 @@ class WorkflowFoundationSeeder extends Seeder
                 // Categories are intentionally stable and broad, while step-level matching
                 // stays event-type specific inside the step graph.
                 'ConditionConfigJson' => [
-                    'notes' => 'Step-aware processing is driven primarily from StepGraphJson in the workflow-kernel foundation.',
+                    'notes' => 'The reference workflow version now proves multi-step event-driven progression and acts as the v3 baseline before wait-time behavior is added.',
                     'supported_event_categories' => [
                         'ENGAGEMENT',
                         'CAMPAIGN_CONTEXT',
@@ -76,14 +76,29 @@ class WorkflowFoundationSeeder extends Seeder
                 // The processor reads this config and writes action queue rows, but it does not
                 // execute external side effects directly.
                 'ActionConfigJson' => [
-                    'on_step_completion' => [
-                        'AWAIT_SIGNAL' => [
+                    [
+                        'step_key' => 'AWAIT_INITIAL_ENGAGEMENT',
+                        'actions' => [
                             [
-                                'action_type' => 'SEND_FOLLOW_UP_EMAIL',
+                                'action_type' => 'UPDATE_WORKFLOW_PROPERTY',
                                 'target_type' => 'CONTACT',
                                 'payload' => [
-                                    'template_key' => 'WELCOME_TEMPLATE',
-                                    'notes' => 'Placeholder queued action for workflow kernel demo',
+                                    'property_key' => 'last_engagement_stage',
+                                    'property_value' => 'INITIAL_ENGAGEMENT_CONFIRMED',
+                                    'notes' => 'Set after the first engagement signal is accepted.',
+                                ],
+                            ],
+                        ],
+                    ],
+                    [
+                        'step_key' => 'AWAIT_STRONGER_SIGNAL',
+                        'actions' => [
+                            [
+                                'action_type' => 'MARK_FOR_SCORING_HANDOFF',
+                                'target_type' => 'CONTACT',
+                                'payload' => [
+                                    'handoff_reason' => 'FORM_SUBMISSION_CONFIRMED',
+                                    'notes' => 'Queue downstream scoring handoff after stronger conversion intent is confirmed.',
                                 ],
                             ],
                         ],
@@ -94,31 +109,38 @@ class WorkflowFoundationSeeder extends Seeder
                 // The current sample keeps this small on purpose so the branch proves
                 // step-aware workflow behavior without overcommitting to a final builder format.
                 'StepGraphJson' => [
-                    'initial_step' => 'AWAIT_SIGNAL',
-                    'steps' => [
-                        [
-                            // The first sample step waits for workflow-relevant engagement or control
-                            // signals. Matching is still event-type specific so step behavior stays precise.
-                            'key' => 'AWAIT_SIGNAL',
-                            'type' => 'WAIT_FOR_EVENT',
-                            'accepted_categories' => [
-                                'ENGAGEMENT',
-                                'WORKFLOW_CONTROL',
-                            ],
-                            'accepted_events' => [
-                                'MANUAL_TEST_EVENT',
-                                'EMAIL_LINK_CLICKED',
-                                'BROCHURE_LINK_CLICKED',
-                                'FORM_SUBMITTED',
-                            ],
-                            'next' => 'COMPLETE',
-                            'terminal_on_match' => false,
+                    [
+                        'key' => 'AWAIT_INITIAL_ENGAGEMENT',
+                        'type' => 'WAIT_FOR_EVENT',
+                        'accepted_categories' => [
+                            'ENGAGEMENT',
+                            'WORKFLOW_CONTROL',
                         ],
-                        [
-                            'key' => 'COMPLETE',
-                            'type' => 'END',
-                            'terminal' => true,
+                        'accepted_events' => [
+                            'MANUAL_TEST_EVENT',
+                            'EMAIL_LINK_CLICKED',
+                            'BROCHURE_LINK_CLICKED',
                         ],
+                        'next' => 'AWAIT_STRONGER_SIGNAL',
+                        'terminal_on_match' => false,
+                    ],
+                    [
+                        'key' => 'AWAIT_STRONGER_SIGNAL',
+                        'type' => 'WAIT_FOR_EVENT',
+                        'accepted_categories' => [
+                            'ENGAGEMENT',
+                            'WORKFLOW_CONTROL',
+                        ],
+                        'accepted_events' => [
+                            'FORM_SUBMITTED',
+                        ],
+                        'next' => 'COMPLETE',
+                        'terminal_on_match' => false,
+                    ],
+                    [
+                        'key' => 'COMPLETE',
+                        'type' => 'TERMINAL',
+                        'terminal' => true,
                     ],
                 ],
             ]
