@@ -64,7 +64,7 @@ class WorkflowFoundationSeeder extends Seeder
                 // Categories are intentionally stable and broad, while step-level matching
                 // stays event-type specific inside the step graph.
                 'ConditionConfigJson' => [
-                    'notes' => 'The reference workflow version now proves multi-step event-driven progression and acts as the v3 baseline before wait-time behavior is added.',
+                    'notes' => 'The reference workflow version now proves multi-step event progression plus timed waiting and resume behavior as the v3 phase 2 baseline.',
                     'supported_event_categories' => [
                         'ENGAGEMENT',
                         'CAMPAIGN_CONTEXT',
@@ -118,6 +118,22 @@ class WorkflowFoundationSeeder extends Seeder
                                 'MANUAL_TEST_EVENT',
                                 'EMAIL_LINK_CLICKED',
                                 'BROCHURE_LINK_CLICKED',
+                            ],
+                            'next' => 'WAIT_BEFORE_STRONGER_SIGNAL',
+                            'terminal_on_match' => false,
+                        ],
+                        [
+                            'key' => 'WAIT_BEFORE_STRONGER_SIGNAL',
+                            'type' => 'WAIT_FOR_TIME',
+                            'accepted_categories' => [
+                                'WORKFLOW_CONTROL',
+                            ],
+                            'accepted_events' => [
+                                'WAIT_TIMER_REACHED',
+                            ],
+                            'wait_config' => [
+                                'mode' => 'DELAY_MINUTES',
+                                'value' => 20,
                             ],
                             'next' => 'AWAIT_STRONGER_SIGNAL',
                             'terminal_on_match' => false,

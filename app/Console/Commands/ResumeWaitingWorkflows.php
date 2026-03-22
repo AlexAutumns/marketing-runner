@@ -1,0 +1,189 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\WorkflowEnrollment;
+use App\Models\WorkflowEventInbox;
+use App\Services\Workflow\WorkflowEventProcessor;
+use Carbon\Carbon;
+use Illuminate\Console\Command;
+use Illuminate\Support\Str;
+
+class ResumeWaitingWorkflows extends Command
+{
+    protected $signature = 'workflow:resume-waiting
+                            {--asOf= : Optional UTC timestamp override for due-check testing}
+                            {--limit=50 : Maximum number of due waiting enrollments to inspect in one run}';
+
+    protected $description = 'Resume due waiting workflow enrollments by generating internal due events and processing them';
+
+    public function handle(WorkflowEventProcessor $processor): int
+    {
+        $asOfInput = $this->option('asOf');
+        $limit = (int) $this->option('limit');
+
+        if ($limit <= 0) {
+            $this->error('Validation failed: --limit must be greater than 0.');
+
+            return self::FAILURE;
+        }
+
+        try {
+            $asOf = $asOfInput ? Carbon::parse($asOfInput) : now();
+        } catch (\Throwable $e) {
+            $this->error('Validation failed: --asOf must be a valid datetime string.');
+
+            return self::FAILURE;
+        }
+
+        $this->newLine();
+        $this->info('WORKFLOW WAITING RESUME COMMAND');
+        $this->line(str_repeat('-', 70));
+        $this->line('AsOf UTC : '.$asOf->toDateTimeString());
+        $this->line('Limit    : '.$limit);
+        $this->line(str_repeat('-', 70));
+
+        $candidates = WorkflowEnrollment::query()
+            ->where('EnrollmentStatusCode', 'WAITING')
+            ->whereNotNull('WaitingUntilUTC')
+            ->where('WaitingUntilUTC', '<=', $asOf)
+            ->orderBy('WaitingUntilUTC')
+            ->limit($limit)
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            $this->comment('No due waiting enrollments were found.');
+            $this->line(str_repeat('-', 70));
+
+            return self::SUCCESS;
+        }
+
+        $createdEvents = 0;
+        $skipped = 0;
+
+        foreach ($candidates as $candidate) {
+            $enrollment = WorkflowEnrollment::find($candidate->EnrollmentID);
+
+            if (! $this->isEligibleToResume($enrollment, $asOf)) {
+                $skipped++;
+
+                $this->warn("Skipped EnrollmentID {$candidate->EnrollmentID} because it is no longer eligible to resume.");
+
+                continue;
+            }
+
+            $dedupeKey = 'WAIT_RESUME:'.$enrollment->EnrollmentID.':'.optional($enrollment->WaitingUntilUTC)->timestamp;
+
+            $alreadyExists = WorkflowEventInbox::query()
+                ->where('DedupeKey', $dedupeKey)
+                ->whereIn('ProcessingStatusCode', ['PENDING', 'PROCESSED'])
+                ->exists();
+
+            if ($alreadyExists) {
+                $skipped++;
+
+                $this->warn("Skipped EnrollmentID {$enrollment->EnrollmentID} because a matching resume event already exists.");
+
+                continue;
+            }
+
+            $eventId = 'EVT_'.Str::upper(Str::random(8));
+
+            WorkflowEventInbox::create([
+                'EventID' => $eventId,
+                'EventTypeCode' => 'WAIT_TIMER_REACHED',
+                'EventCategoryCode' => 'WORKFLOW_CONTROL',
+                'EventSourceCode' => 'SYSTEM_RESUME',
+                'ContactID' => $enrollment->ContactID,
+                'CompanyID' => $enrollment->CompanyID,
+                'WorkflowID' => $enrollment->WorkflowID,
+                'WorkflowVersionID' => $enrollment->WorkflowVersionID,
+                'WorkflowEnrollmentID' => $enrollment->EnrollmentID,
+                'CorrelationKey' => 'WAITING_RESUME_'.$enrollment->EnrollmentID,
+                'DedupeKey' => $dedupeKey,
+                'OccurredAtUTC' => $asOf,
+                'PayloadJson' => [
+                    'resume_reason' => 'WAIT_STEP_DUE',
+                    'waiting_until_utc' => optional($enrollment->WaitingUntilUTC)->toDateTimeString(),
+                    'resume_checked_as_of_utc' => $asOf->toDateTimeString(),
+                ],
+                'ProcessingStatusCode' => 'PENDING',
+            ]);
+
+            $createdEvents++;
+
+            $this->line("Created WAIT_TIMER_REACHED event {$eventId} for EnrollmentID {$enrollment->EnrollmentID}");
+        }
+
+        $this->line(str_repeat('-', 70));
+        $this->line("Created due events : {$createdEvents}");
+        $this->line("Skipped           : {$skipped}");
+        $this->line(str_repeat('-', 70));
+
+        if ($createdEvents === 0) {
+            $this->comment('No new due events were created, so workflow processing was not run.');
+            $this->line(str_repeat('-', 70));
+
+            return self::SUCCESS;
+        }
+
+        $this->comment('Running workflow:process logic for pending events...');
+        $this->line(str_repeat('-', 70));
+
+        $result = $processor->processPendingEvents();
+
+        $this->line('Pending workflow events : '.$result['total_pending']);
+        $this->line('Processed               : '.$result['processed']);
+        $this->line('Ignored                 : '.$result['ignored']);
+        $this->line('Failed                  : '.$result['failed']);
+        $this->line(str_repeat('-', 70));
+
+        return self::SUCCESS;
+    }
+
+    protected function isEligibleToResume(?WorkflowEnrollment $enrollment, Carbon $asOf): bool
+    {
+        if (! $enrollment) {
+            return false;
+        }
+
+        if ($enrollment->EnrollmentStatusCode !== 'WAITING') {
+            return false;
+        }
+
+        if (! $enrollment->WaitingUntilUTC) {
+            return false;
+        }
+
+        if ($enrollment->WaitingUntilUTC->gt($asOf)) {
+            return false;
+        }
+
+        $version = $enrollment->version;
+        $stepGraph = $version?->StepGraphJson ?? [];
+        $currentStep = $this->getStepDefinition($stepGraph, $enrollment->CurrentStepKey);
+
+        if (! $currentStep) {
+            return false;
+        }
+
+        return ($currentStep['type'] ?? null) === 'WAIT_FOR_TIME';
+    }
+
+    protected function getStepDefinition(array $stepGraph, ?string $stepKey): ?array
+    {
+        if (! $stepKey) {
+            return null;
+        }
+
+        $steps = $stepGraph['steps'] ?? [];
+
+        foreach ($steps as $step) {
+            if (($step['key'] ?? null) === $stepKey) {
+                return $step;
+            }
+        }
+
+        return null;
+    }
+}

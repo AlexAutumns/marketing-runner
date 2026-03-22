@@ -344,7 +344,22 @@ class WorkflowEventProcessor
     ): array {
         $nextStepKey = $currentStep['next'] ?? null;
         $nextStep = $this->getStepDefinition($stepGraph, $nextStepKey);
+
+        if (! $nextStep) {
+            $this->markEventFailed(
+                event: $event,
+                message: 'Next workflow step definition could not be resolved.'
+            );
+
+            return $this->failedResult(
+                event: $event,
+                message: 'Next workflow step definition could not be resolved.',
+                enrollmentId: $enrollment->EnrollmentID
+            );
+        }
+
         $isTerminal = (bool) ($nextStep['terminal'] ?? false);
+        $nextStepType = $nextStep['type'] ?? 'UNKNOWN';
 
         if ($isTerminal) {
             return $this->applyTerminalTransition(
@@ -357,12 +372,25 @@ class WorkflowEventProcessor
             );
         }
 
+        if ($nextStepType === 'WAIT_FOR_TIME') {
+            return $this->applyWaitTransition(
+                event: $event,
+                enrollment: $enrollment,
+                currentStepKey: $currentStepKey,
+                currentStep: $currentStep,
+                nextStepKey: $nextStepKey,
+                nextStep: $nextStep,
+                actionConfig: $actionConfig
+            );
+        }
+
         return $this->applyNonTerminalTransition(
             event: $event,
             enrollment: $enrollment,
             currentStepKey: $currentStepKey,
             currentStep: $currentStep,
             nextStepKey: $nextStepKey,
+            nextStep: $nextStep,
             actionConfig: $actionConfig
         );
     }
@@ -432,6 +460,77 @@ class WorkflowEventProcessor
         );
     }
 
+    protected function applyWaitTransition(
+        WorkflowEventInbox $event,
+        WorkflowEnrollment $enrollment,
+        string $currentStepKey,
+        array $currentStep,
+        ?string $nextStepKey,
+        array $nextStep,
+        array $actionConfig
+    ): array {
+        $waitingUntil = $this->resolveWaitingUntil($nextStep);
+
+        $enrollment->update([
+            'CurrentStepKey' => $nextStepKey,
+            'EnrollmentStatusCode' => 'WAITING',
+            'WaitingUntilUTC' => $waitingUntil,
+            'LastEventID' => $event->EventID,
+            'LastActionAtUTC' => now(),
+            'CompletedReasonCode' => null,
+        ]);
+
+        $queuedActionIds = $this->queueStepActions(
+            enrollment: $enrollment,
+            event: $event,
+            actionConfig: $actionConfig,
+            stepKey: $currentStepKey
+        );
+
+        $this->writeStepLog(
+            enrollment: $enrollment,
+            stepKey: $currentStepKey,
+            stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
+            stepStatusCode: 'COMPLETED',
+            relatedEventId: $event->EventID,
+            message: 'Event was accepted by the current workflow step and the workflow advanced into a timed waiting step.',
+            details: [
+                'event_type' => $event->EventTypeCode,
+                'event_category' => $event->EventCategoryCode,
+                'current_step' => $currentStepKey,
+                'next_step' => $nextStepKey,
+                'next_step_type' => $nextStep['type'] ?? 'UNKNOWN',
+                'waiting_until_utc' => optional($waitingUntil)->toDateTimeString(),
+                'queued_action_ids' => $queuedActionIds,
+            ]
+        );
+
+        $this->writeStepLog(
+            enrollment: $enrollment,
+            stepKey: $nextStepKey ?? 'UNKNOWN',
+            stepTypeCode: $nextStep['type'] ?? 'UNKNOWN',
+            stepStatusCode: 'WAITING',
+            relatedEventId: $event->EventID,
+            message: 'Workflow entered a timed waiting step and is paused until the configured due time is reached.',
+            details: [
+                'entered_from_step' => $currentStepKey,
+                'waiting_until_utc' => optional($waitingUntil)->toDateTimeString(),
+                'wait_config' => $nextStep['wait_config'] ?? [],
+            ]
+        );
+
+        $this->markEventProcessed(
+            event: $event,
+            enrollment: $enrollment
+        );
+
+        return $this->processedResult(
+            event: $event,
+            message: "Event type [{$event->EventTypeCode}] was accepted for step [{$currentStepKey}]. The enrollment advanced into waiting step [{$nextStepKey}] until [".optional($waitingUntil)->toDateTimeString().'] and queued '.count($queuedActionIds).' action(s).',
+            enrollmentId: $enrollment->EnrollmentID
+        );
+    }
+
     /**
      * Apply a non-terminal workflow transition.
      *
@@ -451,12 +550,16 @@ class WorkflowEventProcessor
         string $currentStepKey,
         array $currentStep,
         ?string $nextStepKey,
+        array $nextStep,
         array $actionConfig
     ): array {
         $enrollment->update([
             'CurrentStepKey' => $nextStepKey,
+            'EnrollmentStatusCode' => 'ACTIVE',
+            'WaitingUntilUTC' => null,
             'LastEventID' => $event->EventID,
             'LastActionAtUTC' => now(),
+            'CompletedReasonCode' => null,
         ]);
 
         $queuedActionIds = $this->queueStepActions(
@@ -631,6 +734,19 @@ class WorkflowEventProcessor
             'DetailsJson' => $details,
             'OccurredAtUTC' => now(),
         ]);
+    }
+
+    protected function resolveWaitingUntil(array $waitStep)
+    {
+        $waitConfig = $waitStep['wait_config'] ?? [];
+        $mode = $waitConfig['mode'] ?? null;
+        $value = (int) ($waitConfig['value'] ?? 0);
+
+        if ($mode === 'DELAY_MINUTES' && $value > 0) {
+            return now()->copy()->addMinutes($value);
+        }
+
+        return now()->copy();
     }
 
     /**
