@@ -76,9 +76,8 @@ class WorkflowFoundationSeeder extends Seeder
                 // The processor reads this config and writes action queue rows, but it does not
                 // execute external side effects directly.
                 'ActionConfigJson' => [
-                    [
-                        'step_key' => 'AWAIT_INITIAL_ENGAGEMENT',
-                        'actions' => [
+                    'on_step_completion' => [
+                        'AWAIT_INITIAL_ENGAGEMENT' => [
                             [
                                 'action_type' => 'UPDATE_WORKFLOW_PROPERTY',
                                 'target_type' => 'CONTACT',
@@ -89,10 +88,7 @@ class WorkflowFoundationSeeder extends Seeder
                                 ],
                             ],
                         ],
-                    ],
-                    [
-                        'step_key' => 'AWAIT_STRONGER_SIGNAL',
-                        'actions' => [
+                        'AWAIT_STRONGER_SIGNAL' => [
                             [
                                 'action_type' => 'MARK_FOR_SCORING_HANDOFF',
                                 'target_type' => 'CONTACT',
@@ -109,38 +105,41 @@ class WorkflowFoundationSeeder extends Seeder
                 // The current sample keeps this small on purpose so the branch proves
                 // step-aware workflow behavior without overcommitting to a final builder format.
                 'StepGraphJson' => [
-                    [
-                        'key' => 'AWAIT_INITIAL_ENGAGEMENT',
-                        'type' => 'WAIT_FOR_EVENT',
-                        'accepted_categories' => [
-                            'ENGAGEMENT',
-                            'WORKFLOW_CONTROL',
+                    'initial_step' => 'AWAIT_INITIAL_ENGAGEMENT',
+                    'steps' => [
+                        [
+                            'key' => 'AWAIT_INITIAL_ENGAGEMENT',
+                            'type' => 'WAIT_FOR_EVENT',
+                            'accepted_categories' => [
+                                'ENGAGEMENT',
+                                'WORKFLOW_CONTROL',
+                            ],
+                            'accepted_events' => [
+                                'MANUAL_TEST_EVENT',
+                                'EMAIL_LINK_CLICKED',
+                                'BROCHURE_LINK_CLICKED',
+                            ],
+                            'next' => 'AWAIT_STRONGER_SIGNAL',
+                            'terminal_on_match' => false,
                         ],
-                        'accepted_events' => [
-                            'MANUAL_TEST_EVENT',
-                            'EMAIL_LINK_CLICKED',
-                            'BROCHURE_LINK_CLICKED',
+                        [
+                            'key' => 'AWAIT_STRONGER_SIGNAL',
+                            'type' => 'WAIT_FOR_EVENT',
+                            'accepted_categories' => [
+                                'ENGAGEMENT',
+                                'WORKFLOW_CONTROL',
+                            ],
+                            'accepted_events' => [
+                                'FORM_SUBMITTED',
+                            ],
+                            'next' => 'COMPLETE',
+                            'terminal_on_match' => false,
                         ],
-                        'next' => 'AWAIT_STRONGER_SIGNAL',
-                        'terminal_on_match' => false,
-                    ],
-                    [
-                        'key' => 'AWAIT_STRONGER_SIGNAL',
-                        'type' => 'WAIT_FOR_EVENT',
-                        'accepted_categories' => [
-                            'ENGAGEMENT',
-                            'WORKFLOW_CONTROL',
+                        [
+                            'key' => 'COMPLETE',
+                            'type' => 'TERMINAL',
+                            'terminal' => true,
                         ],
-                        'accepted_events' => [
-                            'FORM_SUBMITTED',
-                        ],
-                        'next' => 'COMPLETE',
-                        'terminal_on_match' => false,
-                    ],
-                    [
-                        'key' => 'COMPLETE',
-                        'type' => 'TERMINAL',
-                        'terminal' => true,
                     ],
                 ],
             ]

@@ -249,6 +249,7 @@ class WorkflowEventProcessor
             return [
                 'ok' => false,
                 'result' => $this->failedResult(
+                    event: $event,
                     message: 'Current workflow step definition could not be resolved.',
                     enrollmentId: $enrollment->EnrollmentID
                 ),
