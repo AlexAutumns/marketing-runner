@@ -103,7 +103,18 @@ class EnrollWorkflowContact extends Command
             return self::SUCCESS;
         }
 
-        // 5. Create enrollment
+        // 5. Resolve the initial workflow step from the versioned step graph
+        $stepGraph = $version->StepGraphJson ?? [];
+        $initialStepKey = $this->getInitialStepKey($stepGraph);
+        $initialStep = $this->getStepDefinition($stepGraph, $initialStepKey);
+
+        if (! $initialStepKey || ! $initialStep) {
+            $this->error('Enrollment failed: Workflow version does not expose a valid initial step in StepGraphJson.');
+
+            return self::FAILURE;
+        }
+
+        // 6. Create enrollment
         $enrollmentId = 'ENR_'.Str::upper(Str::random(8));
 
         $enrollment = WorkflowEnrollment::create([
@@ -112,7 +123,7 @@ class EnrollWorkflowContact extends Command
             'WorkflowVersionID' => $workflowVersionId,
             'ContactID' => $contactId,
             'CompanyID' => $companyId,
-            'CurrentStepKey' => 'AWAIT_SIGNAL',
+            'CurrentStepKey' => $initialStepKey,
             'EnrollmentStatusCode' => 'ACTIVE',
             'StartedAtUTC' => now(),
         ]);
@@ -122,7 +133,7 @@ class EnrollWorkflowContact extends Command
         $this->line("CurrentStepKey         : {$enrollment->CurrentStepKey}");
         $this->line("EnrollmentStatusCode   : {$enrollment->EnrollmentStatusCode}");
 
-        // 6. Create initial step log
+        // 7. Create initial step log
         $stepLogId = 'STP_'.Str::upper(Str::random(8));
 
         WorkflowStepLog::create([
@@ -131,7 +142,7 @@ class EnrollWorkflowContact extends Command
             'WorkflowID' => $workflowId,
             'WorkflowVersionID' => $workflowVersionId,
             'StepKey' => 'ENROLLMENT_CREATED',
-            'StepTypeCode' => 'SYSTEM',
+            'StepTypeCode' => $initialStep['type'] ?? 'UNKNOWN',
             'StepStatusCode' => 'COMPLETED',
             'Message' => 'Workflow enrollment created.',
             'DetailsJson' => [
@@ -152,5 +163,27 @@ class EnrollWorkflowContact extends Command
         $this->line(str_repeat('-', 70));
 
         return self::SUCCESS;
+    }
+
+    protected function getInitialStepKey(array $stepGraph): ?string
+    {
+        return $stepGraph['initial_step'] ?? null;
+    }
+
+    protected function getStepDefinition(array $stepGraph, ?string $stepKey): ?array
+    {
+        if (! $stepKey) {
+            return null;
+        }
+
+        $steps = $stepGraph['steps'] ?? [];
+
+        foreach ($steps as $step) {
+            if (($step['key'] ?? null) === $stepKey) {
+                return $step;
+            }
+        }
+
+        return null;
     }
 }
