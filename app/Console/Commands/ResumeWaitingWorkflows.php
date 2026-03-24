@@ -63,7 +63,12 @@ class ResumeWaitingWorkflows extends Command
 
         $createdEvents = 0;
         $skipCounts = [
-            'not_eligible' => 0,
+            'enrollment_missing' => 0,
+            'status_not_waiting' => 0,
+            'waiting_until_missing' => 0,
+            'not_due_yet' => 0,
+            'current_step_unresolved' => 0,
+            'current_step_not_wait_for_time' => 0,
             'duplicate_resume_event' => 0,
         ];
         $createdEventIds = [];
@@ -71,10 +76,18 @@ class ResumeWaitingWorkflows extends Command
         foreach ($candidates as $candidate) {
             $enrollment = WorkflowEnrollment::find($candidate->EnrollmentID);
 
-            if (! $this->isEligibleToResume($enrollment, $asOf)) {
-                $skipCounts['not_eligible']++;
+            $eligibility = $this->evaluateResumeEligibility($enrollment, $asOf);
 
-                $this->warn("Skipped EnrollmentID {$candidate->EnrollmentID} because it is no longer eligible to resume.");
+            if (! $eligibility['eligible']) {
+                $reason = $eligibility['reason'] ?? 'unknown';
+
+                if (! array_key_exists($reason, $skipCounts)) {
+                    $skipCounts[$reason] = 0;
+                }
+
+                $skipCounts[$reason]++;
+
+                $this->warn("Skipped EnrollmentID {$candidate->EnrollmentID} because resume eligibility failed [{$reason}].");
 
                 continue;
             }
@@ -95,7 +108,11 @@ class ResumeWaitingWorkflows extends Command
             }
 
             if ($dryRun) {
-                $this->line("Would create WAIT_TIMER_REACHED for EnrollmentID {$enrollment->EnrollmentID} due at ".optional($enrollment->WaitingUntilUTC)->toDateTimeString());
+                $this->line(
+                    "Would create WAIT_TIMER_REACHED for EnrollmentID {$enrollment->EnrollmentID} "
+                    ."(ContactID {$enrollment->ContactID}) "
+                    .'due at '.optional($enrollment->WaitingUntilUTC)->toDateTimeString()
+                );
 
                 continue;
             }
@@ -131,20 +148,25 @@ class ResumeWaitingWorkflows extends Command
         }
 
         $this->line(str_repeat('-', 70));
-        $this->line("Created due events        : {$createdEvents}");
-        $this->line("Skipped (not eligible)    : {$skipCounts['not_eligible']}");
-        $this->line("Skipped (duplicate event) : {$skipCounts['duplicate_resume_event']}");
+        $this->line("Created due events                 : {$createdEvents}");
+        $this->line("Skipped (enrollment missing)       : {$skipCounts['enrollment_missing']}");
+        $this->line("Skipped (status not waiting)       : {$skipCounts['status_not_waiting']}");
+        $this->line("Skipped (waiting until missing)    : {$skipCounts['waiting_until_missing']}");
+        $this->line("Skipped (not due yet)              : {$skipCounts['not_due_yet']}");
+        $this->line("Skipped (step unresolved)          : {$skipCounts['current_step_unresolved']}");
+        $this->line("Skipped (step not wait_for_time)   : {$skipCounts['current_step_not_wait_for_time']}");
+        $this->line("Skipped (duplicate resume event)   : {$skipCounts['duplicate_resume_event']}");
         $this->line(str_repeat('-', 70));
 
-        if ($createdEvents === 0) {
-            $this->comment('No new due events were created, so workflow processing was not run.');
+        if ($dryRun) {
+            $this->comment('Dry run completed. No resume events were created and no workflow processing was executed.');
             $this->line(str_repeat('-', 70));
 
             return self::SUCCESS;
         }
 
-        if ($dryRun) {
-            $this->comment('Dry run completed. No resume events were created and no workflow processing was executed.');
+        if ($createdEvents === 0) {
+            $this->comment('No new due events were created, so workflow processing was not run.');
             $this->line(str_repeat('-', 70));
 
             return self::SUCCESS;
@@ -164,22 +186,34 @@ class ResumeWaitingWorkflows extends Command
         return self::SUCCESS;
     }
 
-    protected function isEligibleToResume(?WorkflowEnrollment $enrollment, Carbon $asOf): bool
+    protected function evaluateResumeEligibility(?WorkflowEnrollment $enrollment, Carbon $asOf): array
     {
         if (! $enrollment) {
-            return false;
+            return [
+                'eligible' => false,
+                'reason' => 'enrollment_missing',
+            ];
         }
 
         if ($enrollment->EnrollmentStatusCode !== 'WAITING') {
-            return false;
+            return [
+                'eligible' => false,
+                'reason' => 'status_not_waiting',
+            ];
         }
 
         if (! $enrollment->WaitingUntilUTC) {
-            return false;
+            return [
+                'eligible' => false,
+                'reason' => 'waiting_until_missing',
+            ];
         }
 
         if ($enrollment->WaitingUntilUTC->gt($asOf)) {
-            return false;
+            return [
+                'eligible' => false,
+                'reason' => 'not_due_yet',
+            ];
         }
 
         $version = $enrollment->version;
@@ -187,10 +221,23 @@ class ResumeWaitingWorkflows extends Command
         $currentStep = $this->getStepDefinition($stepGraph, $enrollment->CurrentStepKey);
 
         if (! $currentStep) {
-            return false;
+            return [
+                'eligible' => false,
+                'reason' => 'current_step_unresolved',
+            ];
         }
 
-        return ($currentStep['type'] ?? null) === 'WAIT_FOR_TIME';
+        if (($currentStep['type'] ?? null) !== 'WAIT_FOR_TIME') {
+            return [
+                'eligible' => false,
+                'reason' => 'current_step_not_wait_for_time',
+            ];
+        }
+
+        return [
+            'eligible' => true,
+            'reason' => 'eligible',
+        ];
     }
 
     protected function getStepDefinition(array $stepGraph, ?string $stepKey): ?array
