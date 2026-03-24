@@ -91,7 +91,7 @@ class WorkflowEventProcessor
         ];
 
         foreach ($events as $event) {
-            $result = $this->processSingleEvent($event);
+            $result = $this->processEvent($event);
 
             $summary['results'][] = [
                 'event' => $event,
