@@ -12,8 +12,9 @@ use Illuminate\Support\Str;
 class ResumeWaitingWorkflows extends Command
 {
     protected $signature = 'workflow:resume-waiting
-                            {--asOf= : Optional UTC timestamp override for due-check testing}
-                            {--limit=50 : Maximum number of due waiting enrollments to inspect in one run}';
+                        {--asOf= : Optional UTC timestamp override for due-check testing}
+                        {--limit=50 : Maximum number of due waiting enrollments to inspect in one run}
+                        {--dry-run : Show which due waiting enrollments would be resumed without creating events}';
 
     protected $description = 'Resume due waiting workflow enrollments by generating internal due events and processing them';
 
@@ -21,6 +22,7 @@ class ResumeWaitingWorkflows extends Command
     {
         $asOfInput = $this->option('asOf');
         $limit = (int) $this->option('limit');
+        $dryRun = (bool) $this->option('dry-run');
 
         if ($limit <= 0) {
             $this->error('Validation failed: --limit must be greater than 0.');
@@ -41,6 +43,7 @@ class ResumeWaitingWorkflows extends Command
         $this->line(str_repeat('-', 70));
         $this->line('AsOf UTC : '.$asOf->toDateTimeString());
         $this->line('Limit    : '.$limit);
+        $this->line('Dry Run  : '.($dryRun ? 'yes' : 'no'));
         $this->line(str_repeat('-', 70));
 
         $candidates = WorkflowEnrollment::query()
@@ -59,13 +62,17 @@ class ResumeWaitingWorkflows extends Command
         }
 
         $createdEvents = 0;
-        $skipped = 0;
+        $skipCounts = [
+            'not_eligible' => 0,
+            'duplicate_resume_event' => 0,
+        ];
+        $createdEventIds = [];
 
         foreach ($candidates as $candidate) {
             $enrollment = WorkflowEnrollment::find($candidate->EnrollmentID);
 
             if (! $this->isEligibleToResume($enrollment, $asOf)) {
-                $skipped++;
+                $skipCounts['not_eligible']++;
 
                 $this->warn("Skipped EnrollmentID {$candidate->EnrollmentID} because it is no longer eligible to resume.");
 
@@ -80,9 +87,15 @@ class ResumeWaitingWorkflows extends Command
                 ->exists();
 
             if ($alreadyExists) {
-                $skipped++;
+                $skipCounts['duplicate_resume_event']++;
 
                 $this->warn("Skipped EnrollmentID {$enrollment->EnrollmentID} because a matching resume event already exists.");
+
+                continue;
+            }
+
+            if ($dryRun) {
+                $this->line("Would create WAIT_TIMER_REACHED for EnrollmentID {$enrollment->EnrollmentID} due at ".optional($enrollment->WaitingUntilUTC)->toDateTimeString());
 
                 continue;
             }
@@ -110,14 +123,17 @@ class ResumeWaitingWorkflows extends Command
                 'ProcessingStatusCode' => 'PENDING',
             ]);
 
+            $createdEventIds[] = $eventId;
+
             $createdEvents++;
 
             $this->line("Created WAIT_TIMER_REACHED event {$eventId} for EnrollmentID {$enrollment->EnrollmentID}");
         }
 
         $this->line(str_repeat('-', 70));
-        $this->line("Created due events : {$createdEvents}");
-        $this->line("Skipped           : {$skipped}");
+        $this->line("Created due events        : {$createdEvents}");
+        $this->line("Skipped (not eligible)    : {$skipCounts['not_eligible']}");
+        $this->line("Skipped (duplicate event) : {$skipCounts['duplicate_resume_event']}");
         $this->line(str_repeat('-', 70));
 
         if ($createdEvents === 0) {
@@ -127,10 +143,17 @@ class ResumeWaitingWorkflows extends Command
             return self::SUCCESS;
         }
 
+        if ($dryRun) {
+            $this->comment('Dry run completed. No resume events were created and no workflow processing was executed.');
+            $this->line(str_repeat('-', 70));
+
+            return self::SUCCESS;
+        }
+
         $this->comment('Running workflow:process logic for pending events...');
         $this->line(str_repeat('-', 70));
 
-        $result = $processor->processPendingEvents();
+        $result = $processor->processPendingEventsByIds($createdEventIds);
 
         $this->line('Pending workflow events : '.$result['total_pending']);
         $this->line('Processed               : '.$result['processed']);

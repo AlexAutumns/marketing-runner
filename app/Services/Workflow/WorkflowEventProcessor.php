@@ -8,7 +8,6 @@ use App\Models\WorkflowEventInbox;
 use App\Models\WorkflowStepLog;
 use App\Models\WorkflowVersion;
 use Illuminate\Support\Str;
-use Throwable;
 
 /**
  * WorkflowEventProcessor is the workflow-kernel orchestration service.
@@ -50,54 +49,60 @@ class WorkflowEventProcessor
      */
     public function processPendingEvents(): array
     {
+        $events = WorkflowEventInbox::query()
+            ->where('ProcessingStatusCode', 'PENDING')
+            ->orderBy('OccurredAtUTC')
+            ->orderBy('created_at')
+            ->get();
+
+        return $this->processEventCollection($events);
+    }
+
+    public function processPendingEventsByIds(array $eventIds): array
+    {
+        if (empty($eventIds)) {
+            return [
+                'total_pending' => 0,
+                'processed' => 0,
+                'ignored' => 0,
+                'failed' => 0,
+                'results' => [],
+            ];
+        }
+
+        $events = WorkflowEventInbox::query()
+            ->whereIn('EventID', $eventIds)
+            ->where('ProcessingStatusCode', 'PENDING')
+            ->orderBy('OccurredAtUTC')
+            ->orderBy('created_at')
+            ->get();
+
+        return $this->processEventCollection($events);
+    }
+
+    protected function processEventCollection($events): array
+    {
         $summary = [
-            'total_pending' => 0,
+            'total_pending' => $events->count(),
             'processed' => 0,
             'ignored' => 0,
             'failed' => 0,
-            'details' => [],
+            'results' => [],
         ];
 
-        $events = WorkflowEventInbox::where('ProcessingStatusCode', 'PENDING')
-            ->orderBy('OccurredAtUTC')
-            ->get();
-
-        $summary['total_pending'] = $events->count();
-
         foreach ($events as $event) {
-            try {
-                $result = $this->processEvent($event);
+            $result = $this->processSingleEvent($event);
 
-                $summary['details'][] = [
-                    'event_id' => $event->EventID,
-                    'event_type' => $event->EventTypeCode,
-                    'event_category' => $event->EventCategoryCode,
-                    'contact_id' => $event->ContactID,
-                    'result' => $result['status'],
-                    'message' => $result['message'],
-                    'enrollment_id' => $result['enrollment_id'] ?? null,
-                ];
+            $summary['results'][] = [
+                'event' => $event,
+                'result' => $result,
+            ];
 
-                if ($result['status'] === 'processed') {
-                    $summary['processed']++;
-                } elseif ($result['status'] === 'ignored') {
-                    $summary['ignored']++;
-                } else {
-                    $summary['failed']++;
-                }
-            } catch (Throwable $e) {
-                $this->markEventFailed($event, $e->getMessage());
-
-                $summary['details'][] = [
-                    'event_id' => $event->EventID,
-                    'event_type' => $event->EventTypeCode,
-                    'event_category' => $event->EventCategoryCode,
-                    'contact_id' => $event->ContactID,
-                    'result' => 'failed',
-                    'message' => $e->getMessage(),
-                    'enrollment_id' => null,
-                ];
-
+            if (($result['status'] ?? null) === 'processed') {
+                $summary['processed']++;
+            } elseif (($result['status'] ?? null) === 'ignored') {
+                $summary['ignored']++;
+            } else {
                 $summary['failed']++;
             }
         }

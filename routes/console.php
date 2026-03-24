@@ -9,4 +9,5 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('workflow:resume-waiting --limit=50')
-    ->cron('*/20 * * * *');
+    ->cron('*/20 * * * *')
+    ->withoutOverlapping();
