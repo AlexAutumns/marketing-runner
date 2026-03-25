@@ -102,7 +102,7 @@ class ResumeWaitingWorkflows extends Command
             if ($alreadyExists) {
                 $skipCounts['duplicate_resume_event']++;
 
-                $this->warn("Skipped EnrollmentID {$enrollment->EnrollmentID} because a matching resume event already exists.");
+                $this->warn("Skipped EnrollmentID {$enrollment->EnrollmentID} because a matching WAIT_TIMER_REACHED resume event already exists for the current wait point.");
 
                 continue;
             }
@@ -159,7 +159,7 @@ class ResumeWaitingWorkflows extends Command
         $this->line(str_repeat('-', 70));
 
         if ($dryRun) {
-            $this->comment('Dry run completed. No resume events were created and no workflow processing was executed.');
+            $this->comment('Dry run completed. Candidate waiting enrollments were evaluated, but no resume events were created and no workflow processing was executed.');
             $this->line(str_repeat('-', 70));
 
             return self::SUCCESS;
