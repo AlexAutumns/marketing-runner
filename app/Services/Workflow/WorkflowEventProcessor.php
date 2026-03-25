@@ -37,15 +37,11 @@ use Illuminate\Support\Str;
 class WorkflowEventProcessor
 {
     /**
-     * Process all currently pending workflow events in arrival order.
+     * Process all currently pending workflow events in chronological order.
      *
-     * This method is intentionally kept as the batch coordinator:
-     * - it loads the pending inbox rows
-     * - it delegates one-event handling to processEvent()
-     * - it aggregates operator-friendly summary output
-     *
-     * The detailed workflow decision-making should stay below this layer.
-     * This helps keep batch processing readable and easier to support.
+     * This is the broad processing entry point used by the general workflow:process
+     * command. It intentionally loads all pending workflow events and delegates the
+     * actual per-event handling to the shared collection processor.
      */
     public function processPendingEvents(): array
     {
@@ -58,6 +54,13 @@ class WorkflowEventProcessor
         return $this->processEventCollection($events);
     }
 
+    /**
+     * Process only the specified pending workflow events.
+     *
+     * This narrower entry point is used by the timed waiting resume command so that
+     * the command only processes the internal due events it created during the
+     * current run instead of processing unrelated pending events in the system.
+     */
     public function processPendingEventsByIds(array $eventIds): array
     {
         if (empty($eventIds)) {
@@ -80,6 +83,13 @@ class WorkflowEventProcessor
         return $this->processEventCollection($events);
     }
 
+    /**
+     * Process a collection of workflow events and build a consistent summary result.
+     *
+     * This shared helper keeps the loop and summary-counting logic in one place so
+     * both the broad "process all pending" path and the narrower "process selected
+     * event IDs" path behave consistently.
+     */
     protected function processEventCollection($events): array
     {
         $summary = [
@@ -401,17 +411,11 @@ class WorkflowEventProcessor
     }
 
     /**
-     * Apply a terminal workflow transition.
+     * Complete the workflow by moving the enrollment into its terminal step.
      *
-     * Terminal transitions:
-     * - complete the workflow enrollment/run
-     * - write a step log explaining the transition
-     * - queue any configured follow-up actions for the completed step
-     * - mark the event as processed in workflow context
-     *
-     * Even when a workflow run completes, action queue output stays separate from
-     * action execution. This preserves the boundary between workflow decision and
-     * external execution.
+     * Terminal transitions clear any remaining waiting state, write the terminal
+     * step log, queue the step-completion actions for the previous step, and mark
+     * the triggering event as processed.
      */
     protected function applyTerminalTransition(
         WorkflowEventInbox $event,
@@ -467,6 +471,14 @@ class WorkflowEventProcessor
         );
     }
 
+    /**
+     * Move the workflow into a timed waiting step.
+     *
+     * This transition is used when the next resolved step is WAIT_FOR_TIME. The
+     * enrollment is moved into WAITING status, WaitingUntilUTC is persisted, the
+     * current step completion is logged, and a second log entry is written for the
+     * entered waiting step so the pause is visible during inspection.
+     */
     protected function applyWaitTransition(
         WorkflowEventInbox $event,
         WorkflowEnrollment $enrollment,
@@ -756,6 +768,13 @@ class WorkflowEventProcessor
         ]);
     }
 
+    /**
+     * Resolve the due timestamp for a WAIT_FOR_TIME step.
+     *
+     * The current Phase 2 implementation only supports DELAY_MINUTES. Invalid or
+     * missing wait configuration returns null so the processor can fail explicitly
+     * instead of silently turning a broken wait step into an immediately due one.
+     */
     protected function resolveWaitingUntil(array $waitStep): ?\Illuminate\Support\Carbon
     {
         $waitConfig = $waitStep['wait_config'] ?? [];

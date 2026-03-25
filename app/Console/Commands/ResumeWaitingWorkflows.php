@@ -9,6 +9,13 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 
+/**
+ * Resume due workflow enrollments that are currently paused in WAIT_FOR_TIME.
+ *
+ * The command selects due waiting enrollments, re-validates each one as a true
+ * resume candidate, creates internal WAIT_TIMER_REACHED events for the valid
+ * rows, and then processes only the due events created in the current run.
+ */
 class ResumeWaitingWorkflows extends Command
 {
     protected $signature = 'workflow:resume-waiting
@@ -18,6 +25,13 @@ class ResumeWaitingWorkflows extends Command
 
     protected $description = 'Resume due waiting workflow enrollments by generating internal due events and processing them';
 
+    /**
+     * Execute the timed waiting resume cycle.
+     *
+     * This command is intentionally designed to be useful both for scheduled runs
+     * and for local/manual validation. Options such as --asOf and --dry-run exist
+     * so due-time behavior can be tested without waiting for real scheduler time.
+     */
     public function handle(WorkflowEventProcessor $processor): int
     {
         $asOfInput = $this->option('asOf');
@@ -46,6 +60,8 @@ class ResumeWaitingWorkflows extends Command
         $this->line('Dry Run  : '.($dryRun ? 'yes' : 'no'));
         $this->line(str_repeat('-', 70));
 
+        // Select only waiting enrollments that are already due for the current resume window.
+        // These rows are still treated as candidates and will be re-validated individually.
         $candidates = WorkflowEnrollment::query()
             ->where('EnrollmentStatusCode', 'WAITING')
             ->whereNotNull('WaitingUntilUTC')
@@ -92,6 +108,8 @@ class ResumeWaitingWorkflows extends Command
                 continue;
             }
 
+            // Prevent duplicate WAIT_TIMER_REACHED events for the same enrollment and wait point.
+            // This keeps repeated resume runs from re-triggering the same timed transition.
             $dedupeKey = 'WAIT_RESUME:'.$enrollment->EnrollmentID.':'.optional($enrollment->WaitingUntilUTC)->timestamp;
 
             $alreadyExists = WorkflowEventInbox::query()
@@ -189,6 +207,13 @@ class ResumeWaitingWorkflows extends Command
         return self::SUCCESS;
     }
 
+    /**
+     * Re-check whether a selected candidate is still valid for timed resume.
+     *
+     * The initial query only gives a candidate list. Before creating a due event,
+     * the command confirms that the enrollment still exists, is still WAITING, is
+     * still due, and is still positioned on a WAIT_FOR_TIME step.
+     */
     protected function evaluateResumeEligibility(?WorkflowEnrollment $enrollment, Carbon $asOf): array
     {
         if (! $enrollment) {
@@ -243,6 +268,12 @@ class ResumeWaitingWorkflows extends Command
         ];
     }
 
+    /**
+     * Resolve a step definition from the workflow version step graph by key.
+     *
+     * The resume command uses this to confirm that a waiting enrollment is still
+     * sitting on an actual WAIT_FOR_TIME step before it creates a due event.
+     */
     protected function getStepDefinition(array $stepGraph, ?string $stepKey): ?array
     {
         if (! $stepKey) {
