@@ -422,11 +422,13 @@ class WorkflowEventProcessor
         array $actionConfig
     ): array {
         $enrollment->update([
-            'EnrollmentStatusCode' => 'COMPLETED',
             'CurrentStepKey' => $nextStepKey,
-            'CompletedReasonCode' => 'STEP_GRAPH_TERMINAL_REACHED',
-            'LastEventID' => $event->EventID,
+            'EnrollmentStatusCode' => 'COMPLETED',
+            'WaitingUntilUTC' => null,
             'CompletedAtUTC' => now(),
+            'CompletedReasonCode' => 'WORKFLOW_COMPLETED',
+            'LastEventID' => $event->EventID,
+            'LastActionAtUTC' => now(),
         ]);
 
         $queuedActionIds = $this->queueStepActions(
@@ -475,6 +477,19 @@ class WorkflowEventProcessor
         array $actionConfig
     ): array {
         $waitingUntil = $this->resolveWaitingUntil($nextStep);
+
+        if (! $waitingUntil) {
+            $this->markEventFailed(
+                event: $event,
+                message: "Timed wait step [{$nextStepKey}] could not be entered because wait_config is missing or invalid."
+            );
+
+            return $this->failedResult(
+                event: $event,
+                message: "Timed wait step [{$nextStepKey}] could not be entered because wait_config is missing or invalid.",
+                enrollmentId: $enrollment->EnrollmentID
+            );
+        }
 
         $enrollment->update([
             'CurrentStepKey' => $nextStepKey,
@@ -741,7 +756,7 @@ class WorkflowEventProcessor
         ]);
     }
 
-    protected function resolveWaitingUntil(array $waitStep)
+    protected function resolveWaitingUntil(array $waitStep): ?\Illuminate\Support\Carbon
     {
         $waitConfig = $waitStep['wait_config'] ?? [];
         $mode = $waitConfig['mode'] ?? null;
@@ -751,7 +766,7 @@ class WorkflowEventProcessor
             return now()->copy()->addMinutes($value);
         }
 
-        return now()->copy();
+        return null;
     }
 
     /**

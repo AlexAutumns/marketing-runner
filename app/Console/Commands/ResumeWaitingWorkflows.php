@@ -55,7 +55,7 @@ class ResumeWaitingWorkflows extends Command
             ->get();
 
         if ($candidates->isEmpty()) {
-            $this->comment('No due waiting enrollments were found.');
+            $this->comment('No due waiting enrollments were found for the current resume window.');
             $this->line(str_repeat('-', 70));
 
             return self::SUCCESS;
@@ -144,7 +144,10 @@ class ResumeWaitingWorkflows extends Command
 
             $createdEvents++;
 
-            $this->line("Created WAIT_TIMER_REACHED event {$eventId} for EnrollmentID {$enrollment->EnrollmentID}");
+            $this->line(
+                "Created WAIT_TIMER_REACHED event {$eventId} for EnrollmentID {$enrollment->EnrollmentID} "
+                ."(ContactID {$enrollment->ContactID})"
+            );
         }
 
         $this->line(str_repeat('-', 70));
