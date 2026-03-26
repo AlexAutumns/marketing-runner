@@ -410,6 +410,218 @@ class WorkflowEventProcessor
         );
     }
 
+    protected function evaluateStepConditions(
+        array $stepDefinition,
+        $event,
+        $enrollment
+    ): array {
+        $conditions = $this->normalizeStepConditions($stepDefinition);
+
+        foreach ($conditions as $condition) {
+            $result = $this->evaluateSingleCondition(
+                condition: $condition,
+                event: $event,
+                enrollment: $enrollment,
+                stepDefinition: $stepDefinition
+            );
+
+            if (! ($result['passed'] ?? false)) {
+                return $result;
+            }
+        }
+
+        return [
+            'passed' => true,
+            'reason' => 'conditions_passed',
+        ];
+    }
+
+    protected function normalizeStepConditions(array $stepDefinition): array
+    {
+        $normalized = [];
+
+        if (! empty($stepDefinition['conditions']) && is_array($stepDefinition['conditions'])) {
+            return $stepDefinition['conditions'];
+        }
+
+        // Backward-tolerant support for older seeded step definitions.
+        if (! empty($stepDefinition['accepted_events']) && is_array($stepDefinition['accepted_events'])) {
+            $normalized[] = [
+                'type' => 'event_type_in',
+                'config' => [
+                    'values' => array_values($stepDefinition['accepted_events']),
+                ],
+            ];
+        }
+
+        if (! empty($stepDefinition['accepted_categories']) && is_array($stepDefinition['accepted_categories'])) {
+            $normalized[] = [
+                'type' => 'event_category_in',
+                'config' => [
+                    'values' => array_values($stepDefinition['accepted_categories']),
+                ],
+            ];
+        }
+
+        if (! empty($stepDefinition['accepted_sources']) && is_array($stepDefinition['accepted_sources'])) {
+            $normalized[] = [
+                'type' => 'event_source_in',
+                'config' => [
+                    'values' => array_values($stepDefinition['accepted_sources']),
+                ],
+            ];
+        }
+
+        return $normalized;
+    }
+
+    protected function evaluateSingleCondition(
+        array $condition,
+        $event,
+        $enrollment,
+        array $stepDefinition
+    ): array {
+        $type = $condition['type'] ?? null;
+        $config = $condition['config'] ?? [];
+
+        return match ($type) {
+            'event_type_in' => $this->evaluateEventTypeInCondition($config, $event),
+            'event_category_in' => $this->evaluateEventCategoryInCondition($config, $event),
+            'event_source_in' => $this->evaluateEventSourceInCondition($config, $event),
+            'payload_field_exists' => $this->evaluatePayloadFieldExistsCondition($config, $event),
+            $stepDefinitionKeyMessage => $stepDefinition['key'] ?? 'unknown_step',
+            default => [
+                'passed' => false,
+                'reason' => 'unsupported_condition_type',
+                'message' => "Unsupported condition type [{$type}] on step [{$stepDefinitionKeyMessage}].",
+                'treat_as_failure' => true,
+            ],
+        };
+    }
+
+    protected function evaluateEventTypeInCondition(array $config, $event): array
+    {
+        $values = $config['values'] ?? [];
+
+        if (! is_array($values) || empty($values)) {
+            return [
+                'passed' => false,
+                'reason' => 'invalid_condition_config',
+                'message' => 'Condition event_type_in requires a non-empty values array.',
+                'treat_as_failure' => true,
+            ];
+        }
+
+        if (in_array($event->EventTypeCode, $values, true)) {
+            return [
+                'passed' => true,
+                'reason' => 'event_type_matched',
+            ];
+        }
+
+        return [
+            'passed' => false,
+            'reason' => 'event_type_not_allowed',
+            'message' => "Event type [{$event->EventTypeCode}] is not accepted by this step.",
+            'treat_as_failure' => false,
+        ];
+    }
+
+    protected function evaluateEventCategoryInCondition(array $config, $event): array
+    {
+        $values = $config['values'] ?? [];
+
+        if (! is_array($values) || empty($values)) {
+            return [
+                'passed' => false,
+                'reason' => 'invalid_condition_config',
+                'message' => 'Condition event_category_in requires a non-empty values array.',
+                'treat_as_failure' => true,
+            ];
+        }
+
+        if (in_array($event->EventCategoryCode, $values, true)) {
+            return [
+                'passed' => true,
+                'reason' => 'event_category_matched',
+            ];
+        }
+
+        return [
+            'passed' => false,
+            'reason' => 'event_category_not_allowed',
+            'message' => "Event category [{$event->EventCategoryCode}] is not accepted by this step.",
+            'treat_as_failure' => false,
+        ];
+    }
+
+    protected function evaluateEventSourceInCondition(array $config, $event): array
+    {
+        $values = $config['values'] ?? [];
+
+        if (! is_array($values) || empty($values)) {
+            return [
+                'passed' => false,
+                'reason' => 'invalid_condition_config',
+                'message' => 'Condition event_source_in requires a non-empty values array.',
+                'treat_as_failure' => true,
+            ];
+        }
+
+        if (in_array($event->EventSourceCode, $values, true)) {
+            return [
+                'passed' => true,
+                'reason' => 'event_source_matched',
+            ];
+        }
+
+        return [
+            'passed' => false,
+            'reason' => 'event_source_not_allowed',
+            'message' => "Event source [{$event->EventSourceCode}] is not accepted by this step.",
+            'treat_as_failure' => false,
+        ];
+    }
+
+    protected function evaluatePayloadFieldExistsCondition(array $config, $event): array
+    {
+        $field = $config['field'] ?? null;
+
+        if (! is_string($field) || trim($field) === '') {
+            return [
+                'passed' => false,
+                'reason' => 'invalid_condition_config',
+                'message' => 'Condition payload_field_exists requires a non-empty field value.',
+                'treat_as_failure' => true,
+            ];
+        }
+
+        $payload = $event->PayloadJson ?? [];
+
+        if (! is_array($payload)) {
+            return [
+                'passed' => false,
+                'reason' => 'invalid_event_payload',
+                'message' => 'Event payload is not a valid array for payload_field_exists evaluation.',
+                'treat_as_failure' => true,
+            ];
+        }
+
+        if (array_key_exists($field, $payload)) {
+            return [
+                'passed' => true,
+                'reason' => 'payload_field_present',
+            ];
+        }
+
+        return [
+            'passed' => false,
+            'reason' => 'payload_field_missing',
+            'message' => "Required payload field [{$field}] is missing.",
+            'treat_as_failure' => false,
+        ];
+    }
+
     /**
      * Complete the workflow by moving the enrollment into its terminal step.
      *
