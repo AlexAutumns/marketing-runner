@@ -281,18 +281,12 @@ class WorkflowEventProcessor
     }
 
     /**
-     * Check whether the current workflow step accepts the incoming event.
+     * Validate the incoming event against the current step's configured conditions.
      *
-     * Important design note:
-     * - event categories are intentionally broad and stable
-     * - event types are more specific and are used for current step matching
-     *
-     * At this stage, the processor matches by accepted event types, not by
-     * category alone. That is intentional:
-     * category helps keep the event model structured,
-     * while event type keeps the workflow behavior precise.
-     *
-     * This balance supports flexible edges without making step behavior too vague.
+     * Phase 3 moves step acceptance into an explicit typed-condition model.
+     * Runtime guards such as current-step validity and enrollment lifecycle safety
+     * still stay in the processor core rather than being exposed as user-facing
+     * configuration too early.
      */
     protected function validateEventAgainstCurrentStep(
         WorkflowEventInbox $event,
@@ -300,23 +294,45 @@ class WorkflowEventProcessor
         string $currentStepKey,
         array $currentStep
     ): array {
-        // Categories keep the event model structured; step matching still stays event-type specific.
-        $acceptedEvents = $currentStep['accepted_events'] ?? [];
+        $conditionResult = $this->evaluateStepConditions(
+            stepDefinition: $currentStep,
+            event: $event,
+            enrollment: $enrollment
+        );
 
-        if (! in_array($event->EventTypeCode, $acceptedEvents, true)) {
+        if (! ($conditionResult['passed'] ?? false)) {
+            $message = $conditionResult['message'] ?? 'Workflow step conditions were not satisfied.';
+            $treatAsFailure = (bool) ($conditionResult['treat_as_failure'] ?? false);
+
+            if ($treatAsFailure) {
+                $this->markEventFailed(
+                    event: $event,
+                    message: $message
+                );
+
+                return [
+                    'ok' => false,
+                    'result' => $this->failedResult(
+                        event: $event,
+                        message: $message,
+                        enrollmentId: $enrollment->EnrollmentID
+                    ),
+                ];
+            }
+
             $this->writeStepLog(
                 enrollment: $enrollment,
                 stepKey: $currentStepKey,
                 stepTypeCode: $currentStep['type'] ?? 'UNKNOWN',
                 stepStatusCode: 'IGNORED',
                 relatedEventId: $event->EventID,
-                message: 'Event was received, classified, and ignored because the current workflow step does not accept this event type.',
+                message: 'Event was received but ignored because the current workflow step conditions were not satisfied.',
                 details: [
                     'event_type' => $event->EventTypeCode,
                     'event_category' => $event->EventCategoryCode,
+                    'event_source' => $event->EventSourceCode,
                     'current_step' => $currentStepKey,
-                    'accepted_categories' => $currentStep['accepted_categories'] ?? [],
-                    'accepted_events' => $acceptedEvents,
+                    'condition_reason' => $conditionResult['reason'] ?? 'unknown',
                 ]
             );
 
@@ -329,7 +345,7 @@ class WorkflowEventProcessor
                 'ok' => false,
                 'result' => $this->ignoredResult(
                     event: $event,
-                    message: "Event type [{$event->EventTypeCode}] was ignored because it is not accepted for current step [{$currentStepKey}].",
+                    message: $message,
                     enrollmentId: $enrollment->EnrollmentID
                 ),
             ];
@@ -483,17 +499,17 @@ class WorkflowEventProcessor
     ): array {
         $type = $condition['type'] ?? null;
         $config = $condition['config'] ?? [];
+        $stepDefinitionKey = $stepDefinition['key'] ?? 'unknown_step';
 
         return match ($type) {
             'event_type_in' => $this->evaluateEventTypeInCondition($config, $event),
             'event_category_in' => $this->evaluateEventCategoryInCondition($config, $event),
             'event_source_in' => $this->evaluateEventSourceInCondition($config, $event),
             'payload_field_exists' => $this->evaluatePayloadFieldExistsCondition($config, $event),
-            $stepDefinitionKeyMessage => $stepDefinition['key'] ?? 'unknown_step',
             default => [
                 'passed' => false,
                 'reason' => 'unsupported_condition_type',
-                'message' => "Unsupported condition type [{$type}] on step [{$stepDefinitionKeyMessage}].",
+                'message' => "Unsupported condition type [{$type}] on step [{$stepDefinitionKey}].",
                 'treat_as_failure' => true,
             ],
         };

@@ -110,14 +110,35 @@ class WorkflowFoundationSeeder extends Seeder
                         [
                             'key' => 'AWAIT_INITIAL_ENGAGEMENT',
                             'type' => 'WAIT_FOR_EVENT',
-                            'accepted_categories' => [
-                                'ENGAGEMENT',
-                                'WORKFLOW_CONTROL',
-                            ],
-                            'accepted_events' => [
-                                'MANUAL_TEST_EVENT',
-                                'EMAIL_LINK_CLICKED',
-                                'BROCHURE_LINK_CLICKED',
+                            'conditions' => [
+                                [
+                                    'type' => 'event_type_in',
+                                    'config' => [
+                                        'values' => [
+                                            'MANUAL_TEST_EVENT',
+                                            'EMAIL_LINK_CLICKED',
+                                            'BROCHURE_LINK_CLICKED',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_category_in',
+                                    'config' => [
+                                        'values' => [
+                                            'ENGAGEMENT',
+                                            'WORKFLOW_CONTROL',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_source_in',
+                                    'config' => [
+                                        'values' => [
+                                            'EMAIL_TRACKING',
+                                            'MANUAL_TEST',
+                                        ],
+                                    ],
+                                ],
                             ],
                             'next' => 'WAIT_BEFORE_STRONGER_SIGNAL',
                             'terminal_on_match' => false,
@@ -125,11 +146,32 @@ class WorkflowFoundationSeeder extends Seeder
                         [
                             'key' => 'WAIT_BEFORE_STRONGER_SIGNAL',
                             'type' => 'WAIT_FOR_TIME',
-                            'accepted_categories' => [
-                                'WORKFLOW_CONTROL',
-                            ],
-                            'accepted_events' => [
-                                'WAIT_TIMER_REACHED',
+                            'conditions' => [
+                                [
+                                    'type' => 'event_type_in',
+                                    'config' => [
+                                        'values' => [
+                                            'WAIT_TIMER_REACHED',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_category_in',
+                                    'config' => [
+                                        'values' => [
+                                            'WORKFLOW_CONTROL',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_source_in',
+                                    'config' => [
+                                        'values' => [
+                                            'WORKFLOW_TIMER',
+                                            'MANUAL_TEST',
+                                        ],
+                                    ],
+                                ],
                             ],
                             'wait_config' => [
                                 'mode' => 'DELAY_MINUTES',
@@ -141,12 +183,33 @@ class WorkflowFoundationSeeder extends Seeder
                         [
                             'key' => 'AWAIT_STRONGER_SIGNAL',
                             'type' => 'WAIT_FOR_EVENT',
-                            'accepted_categories' => [
-                                'ENGAGEMENT',
-                                'WORKFLOW_CONTROL',
-                            ],
-                            'accepted_events' => [
-                                'FORM_SUBMITTED',
+                            'conditions' => [
+                                [
+                                    'type' => 'event_type_in',
+                                    'config' => [
+                                        'values' => [
+                                            'FORM_SUBMITTED',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_category_in',
+                                    'config' => [
+                                        'values' => [
+                                            'ENGAGEMENT',
+                                            'WORKFLOW_CONTROL',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_source_in',
+                                    'config' => [
+                                        'values' => [
+                                            'FORM_CAPTURE',
+                                            'MANUAL_TEST',
+                                        ],
+                                    ],
+                                ],
                             ],
                             'next' => 'COMPLETE',
                             'terminal_on_match' => false,
