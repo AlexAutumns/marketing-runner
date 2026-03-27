@@ -139,6 +139,13 @@ class WorkflowFoundationSeeder extends Seeder
                                         ],
                                     ],
                                 ],
+                                // [ // just for testing purposes - the processor should support flexible payload matching for future builder complexity
+                                //     'type' => 'payload_field_equals',
+                                //     'config' => [
+                                //         'field' => 'channel',
+                                //         'value' => 'EMAIL',
+                                //     ],
+                                // ],
                             ],
                             'next' => 'WAIT_BEFORE_STRONGER_SIGNAL',
                             'terminal_on_match' => false,
@@ -167,7 +174,7 @@ class WorkflowFoundationSeeder extends Seeder
                                     'type' => 'event_source_in',
                                     'config' => [
                                         'values' => [
-                                            'WORKFLOW_TIMER',
+                                            'SYSTEM_RESUME',
                                             'MANUAL_TEST',
                                         ],
                                     ],

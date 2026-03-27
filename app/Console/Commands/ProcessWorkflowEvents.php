@@ -22,15 +22,18 @@ class ProcessWorkflowEvents extends Command
         $this->line('Pending workflow events : '.$result['total_pending']);
         $this->line(str_repeat('-', 70));
 
-        if (! empty($result['details'])) {
-            foreach ($result['details'] as $index => $detail) {
+        if (! empty($result['results'])) {
+            foreach ($result['results'] as $index => $detail) {
+                $event = $detail['event'];
+                $eventResult = $detail['result'];
+
                 $this->info('Event '.($index + 1));
-                $this->line('  EventID       : '.$detail['event_id']);
-                $this->line('  EventType     : '.$detail['event_type']);
-                $this->line('  ContactID     : '.($detail['contact_id'] ?? '[none]'));
-                $this->line('  EnrollmentID  : '.($detail['enrollment_id'] ?? '[none]'));
-                $this->line('  Result        : '.strtoupper($detail['result']));
-                $this->line('  Message       : '.$detail['message']);
+                $this->line('  EventID       : '.$event->EventID);
+                $this->line('  EventType     : '.$event->EventTypeCode);
+                $this->line('  ContactID     : '.($event->ContactID ?: '[none]'));
+                $this->line('  EnrollmentID  : '.($event->WorkflowEnrollmentID ?: '[none]'));
+                $this->line('  Result        : '.strtoupper($eventResult['status'] ?? 'unknown'));
+                $this->line('  Message       : '.($eventResult['message'] ?? '[none]'));
                 $this->line(str_repeat('-', 70));
             }
         } else {
