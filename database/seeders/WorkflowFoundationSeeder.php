@@ -56,6 +56,12 @@ class WorkflowFoundationSeeder extends Seeder
                 'WorkflowID' => 'WFL_001',
                 'VersionNo' => 1,
                 'VersionStatusCode' => 'ACTIVE',
+
+                'WorkflowProfileCode' => 'WORKFLOW_KERNEL_BASELINE_V1',
+                'GraphDefinitionHash' => null,
+                'SupersedesWorkflowVersionID' => null,
+                'ChangeSummary' => 'Original multi-step workflow-kernel baseline reference version.',
+
                 'TriggerConfigJson' => [
                     'start_mode' => 'manual_enrollment',
                 ],
@@ -213,6 +219,101 @@ class WorkflowFoundationSeeder extends Seeder
                                     'config' => [
                                         'values' => [
                                             'FORM_CAPTURE',
+                                            'MANUAL_TEST',
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            'next' => 'COMPLETE',
+                            'terminal_on_match' => false,
+                        ],
+                        [
+                            'key' => 'COMPLETE',
+                            'type' => 'TERMINAL',
+                            'terminal' => true,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        WorkflowVersion::updateOrCreate(
+            ['WorkflowVersionID' => 'WFLV_002'],
+            [
+                'WorkflowID' => 'WFL_001',
+                'VersionNo' => 2,
+                'VersionStatusCode' => 'ACTIVE',
+
+                'WorkflowProfileCode' => 'EMAIL_SCORING_V1',
+                'GraphDefinitionHash' => null,
+                'SupersedesWorkflowVersionID' => 'WFLV_001',
+                'ChangeSummary' => 'Email-first scoring reference version aligned to the current MVP.',
+
+                'TriggerConfigJson' => [
+                    'start_mode' => 'manual_enrollment',
+                ],
+
+                'ConditionConfigJson' => [
+                    'notes' => 'Email-first reference workflow version used for current MVP scoring flow validation.',
+                    'supported_event_categories' => [
+                        'ENGAGEMENT',
+                        'WORKFLOW_CONTROL',
+                    ],
+                ],
+
+                'ActionConfigJson' => [
+                    'on_step_completion' => [
+                        'AWAIT_EMAIL_SIGNAL' => [
+                            [
+                                'action_type' => 'APPLY_LEAD_SCORE',
+                                'target_type' => 'CONTACT',
+                                'payload' => [
+                                    'score_rule_code' => 'EMAIL_CLICK',
+                                    'notes' => 'Apply lead score when a tracked email click is accepted.',
+                                ],
+                            ],
+                            [
+                                'action_type' => 'UPDATE_LEAD_SUMMARY',
+                                'target_type' => 'CONTACT',
+                                'payload' => [
+                                    'summary_code' => 'EMAIL_CLICKED',
+                                    'notes' => 'Update lead summary when a tracked email click is accepted.',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+
+                'StepGraphJson' => [
+                    'initial_step' => 'AWAIT_EMAIL_SIGNAL',
+                    'steps' => [
+                        [
+                            'key' => 'AWAIT_EMAIL_SIGNAL',
+                            'type' => 'WAIT_FOR_EVENT',
+                            'conditions' => [
+                                [
+                                    'type' => 'event_type_in',
+                                    'config' => [
+                                        'values' => [
+                                            'MANUAL_TEST_EVENT',
+                                            'EMAIL_LINK_CLICKED',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_category_in',
+                                    'config' => [
+                                        'values' => [
+                                            'ENGAGEMENT',
+                                            'WORKFLOW_CONTROL',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'type' => 'event_source_in',
+                                    'config' => [
+                                        'values' => [
+                                            'EMAIL_TRACKING',
                                             'MANUAL_TEST',
                                         ],
                                     ],

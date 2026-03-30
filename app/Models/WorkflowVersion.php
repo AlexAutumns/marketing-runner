@@ -21,10 +21,14 @@ class WorkflowVersion extends Model
         'WorkflowID',
         'VersionNo',
         'VersionStatusCode',
+        'WorkflowProfileCode',
         'TriggerConfigJson',
         'ConditionConfigJson',
         'ActionConfigJson',
         'StepGraphJson',
+        'GraphDefinitionHash',
+        'SupersedesWorkflowVersionID',
+        'ChangeSummary',
         'PublishedAtUTC',
     ];
 
