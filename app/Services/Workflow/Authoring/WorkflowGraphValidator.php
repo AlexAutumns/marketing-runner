@@ -360,7 +360,100 @@ class WorkflowGraphValidator
 
                 if (! in_array($actionType, $catalog['action_types'], true)) {
                     $errors[] = "ActionConfigJson step [{$stepKey}] uses unsupported action_type [{$actionType}].";
+
+                    continue;
                 }
+
+                $this->validateActionShape(
+                    stepKey: $stepKey,
+                    actionType: $actionType,
+                    action: $action,
+                    catalog: $catalog,
+                    errors: $errors
+                );
+            }
+        }
+    }
+
+    protected function validateActionShape(
+        string $stepKey,
+        string $actionType,
+        array $action,
+        array $catalog,
+        array &$errors
+    ): void {
+        $rules = $catalog['action_rules'][$actionType] ?? null;
+
+        if (! is_array($rules)) {
+            return;
+        }
+
+        $targetType = $action['target_type'] ?? null;
+        $payload = $action['payload'] ?? null;
+
+        $this->validateActionTargetType(
+            stepKey: $stepKey,
+            actionType: $actionType,
+            targetType: $targetType,
+            rules: $rules,
+            errors: $errors
+        );
+
+        $this->validateActionPayloadKeys(
+            stepKey: $stepKey,
+            actionType: $actionType,
+            payload: $payload,
+            rules: $rules,
+            errors: $errors
+        );
+    }
+
+    protected function validateActionTargetType(
+        string $stepKey,
+        string $actionType,
+        mixed $targetType,
+        array $rules,
+        array &$errors
+    ): void {
+        $allowedTargetTypes = $rules['allowed_target_types'] ?? [];
+
+        if ($allowedTargetTypes === []) {
+            return;
+        }
+
+        if (! is_string($targetType) || trim($targetType) === '') {
+            $errors[] = "ActionConfigJson step [{$stepKey}] action [{$actionType}] requires target_type.";
+
+            return;
+        }
+
+        if (! in_array($targetType, $allowedTargetTypes, true)) {
+            $errors[] = "ActionConfigJson step [{$stepKey}] action [{$actionType}] uses unsupported target_type [{$targetType}].";
+        }
+    }
+
+    protected function validateActionPayloadKeys(
+        string $stepKey,
+        string $actionType,
+        mixed $payload,
+        array $rules,
+        array &$errors
+    ): void {
+        $requiredPayloadKeys = $rules['required_payload_keys'] ?? [];
+
+        if ($requiredPayloadKeys === []) {
+            return;
+        }
+
+        if (! is_array($payload)) {
+            $errors[] = "ActionConfigJson step [{$stepKey}] action [{$actionType}] requires payload array.";
+
+            return;
+        }
+
+        foreach ($requiredPayloadKeys as $requiredKey) {
+            if (! array_key_exists($requiredKey, $payload)) {
+                $errors[] = "ActionConfigJson step [{$stepKey}] action [{$actionType}] is missing required payload key [{$requiredKey}].";
             }
         }
     }

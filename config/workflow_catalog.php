@@ -66,6 +66,49 @@ return [
     ],
 
     /*
+    |--------------------------------------------------------------------------
+    | Action rules
+    |--------------------------------------------------------------------------
+    |
+    | These rules strengthen action behavior without turning the kernel into
+    | an execution engine. They describe what the workflow definition must
+    | provide for each supported action type.
+    |
+    | Keep these rules small and practical.
+    |
+    */
+    'action_rules' => [
+        'UPDATE_WORKFLOW_PROPERTY' => [
+            'allowed_target_types' => ['CONTACT'],
+            'required_payload_keys' => ['property_key', 'property_value'],
+        ],
+
+        'MARK_FOR_SCORING_HANDOFF' => [
+            'allowed_target_types' => ['CONTACT'],
+            'required_payload_keys' => ['handoff_reason'],
+        ],
+
+        'APPLY_LEAD_SCORE' => [
+            'allowed_target_types' => ['CONTACT'],
+            'required_payload_keys' => ['score_rule_code'],
+        ],
+
+        'UPDATE_LEAD_SUMMARY' => [
+            'allowed_target_types' => ['CONTACT'],
+            'required_payload_keys' => ['summary_code'],
+        ],
+
+        /*
+         * SEND_EMAIL is included now as a forward-ready action family even
+         * though the current seed does not actively use it yet.
+         */
+        'SEND_EMAIL' => [
+            'allowed_target_types' => ['CONTACT'],
+            'required_payload_keys' => ['template_key'],
+        ],
+    ],
+
+    /*
     --------------------------------------------------------------------------
      Supported source systems
     --------------------------------------------------------------------------
