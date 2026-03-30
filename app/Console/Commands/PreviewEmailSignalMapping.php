@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Services\Workflow\Integration\DomainUpdateInstructionBuilder;
 use App\Services\Workflow\Integration\IntegrationEventNormalizer;
 use App\Services\Workflow\Integration\WorkflowSignalMapper;
 use Illuminate\Console\Command;
@@ -21,8 +22,11 @@ class PreviewEmailSignalMapping extends Command
     protected $description = 'Preview normalized email signal shape and mapped workflow action output';
 
     public function handle(
+
         IntegrationEventNormalizer $normalizer,
-        WorkflowSignalMapper $mapper
+        WorkflowSignalMapper $mapper,
+        DomainUpdateInstructionBuilder $instructionBuilder
+
     ): int {
         $payload = [
             'event_type' => $this->argument('eventType'),
@@ -38,6 +42,10 @@ class PreviewEmailSignalMapping extends Command
 
         $normalizedEvent = $normalizer->normalizeEmailTrackingEvent($payload);
         $mappedActions = $mapper->mapEmailSignalToActions($normalizedEvent);
+        $domainUpdateInstructions = $instructionBuilder->buildFromMappedActions(
+            $mappedActions,
+            $normalizedEvent
+        );
 
         $this->newLine();
         $this->info('NORMALIZED EMAIL SIGNAL');
@@ -48,6 +56,11 @@ class PreviewEmailSignalMapping extends Command
         $this->info('MAPPED WORKFLOW ACTIONS');
         $this->line(str_repeat('-', 70));
         $this->line(json_encode($mappedActions, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $this->line(str_repeat('-', 70));
+
+        $this->info('DOMAIN UPDATE INSTRUCTIONS');
+        $this->line(str_repeat('-', 70));
+        $this->line(json_encode($domainUpdateInstructions, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         $this->line(str_repeat('-', 70));
 
         return self::SUCCESS;
