@@ -193,6 +193,14 @@ class WorkflowGraphValidator
 
                 if (! is_array($values) || $values === []) {
                     $errors[] = "Step [{$stepKey}] condition [{$conditionType}] requires a non-empty config.values array.";
+                } else {
+                    $this->validateCatalogBackedConditionValues(
+                        stepKey: $stepKey,
+                        conditionType: $conditionType,
+                        values: $values,
+                        catalog: $catalog,
+                        errors: $errors
+                    );
                 }
             }
 
@@ -202,6 +210,49 @@ class WorkflowGraphValidator
                 if (! is_string($field) || trim($field) === '') {
                     $errors[] = "Step [{$stepKey}] condition [payload_field_exists] requires config.field.";
                 }
+            }
+        }
+    }
+
+    protected function validateCatalogBackedConditionValues(
+        string $stepKey,
+        string $conditionType,
+        array $values,
+        array $catalog,
+        array &$errors
+    ): void {
+        $allowedValues = match ($conditionType) {
+            'event_type_in' => $catalog['event_types'],
+            'event_category_in' => $catalog['event_categories'],
+            'event_source_in' => $catalog['source_systems'],
+            default => [],
+        };
+
+        $this->validateKnownStringValues(
+            stepKey: $stepKey,
+            conditionType: $conditionType,
+            values: $values,
+            allowedValues: $allowedValues,
+            errors: $errors
+        );
+    }
+
+    protected function validateKnownStringValues(
+        string $stepKey,
+        string $conditionType,
+        array $values,
+        array $allowedValues,
+        array &$errors
+    ): void {
+        foreach ($values as $valueIndex => $value) {
+            if (! is_string($value) || trim($value) === '') {
+                $errors[] = "Step [{$stepKey}] condition [{$conditionType}] has an invalid value at index [{$valueIndex}].";
+
+                continue;
+            }
+
+            if (! in_array($value, $allowedValues, true)) {
+                $errors[] = "Step [{$stepKey}] condition [{$conditionType}] uses unsupported value [{$value}].";
             }
         }
     }

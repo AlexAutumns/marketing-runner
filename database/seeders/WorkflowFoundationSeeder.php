@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\WorkflowDefinition;
 use App\Models\WorkflowVersion;
+use App\Services\Workflow\Authoring\WorkflowVersionService;
 use Illuminate\Database\Seeder;
 
 /**
@@ -331,5 +332,24 @@ class WorkflowFoundationSeeder extends Seeder
                 ],
             ]
         );
+
+        /**
+         * Backfill definition hashes for seeded reference versions
+         *
+         * The governance service uses GraphDefinitionHash for duplicate-definition protection.
+         * Seeded reference versions need real hashes too, otherwise publish-time duplicate checks are only half-real.
+         */
+        $versionService = app(WorkflowVersionService::class);
+
+        foreach (['WFLV_001', 'WFLV_002'] as $workflowVersionId) {
+            $workflowVersion = WorkflowVersion::query()->find($workflowVersionId);
+
+            if (! $workflowVersion) {
+                continue;
+            }
+
+            $workflowVersion->GraphDefinitionHash = $versionService->calculateDefinitionHash($workflowVersion);
+            $workflowVersion->save();
+        }
     }
 }

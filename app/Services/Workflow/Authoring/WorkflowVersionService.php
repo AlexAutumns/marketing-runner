@@ -68,7 +68,7 @@ class WorkflowVersionService
             );
         }
 
-        $definitionHash = $this->makeDefinitionHash($workflowVersion);
+        $definitionHash = $this->calculateDefinitionHash($workflowVersion);
 
         $duplicateExists = WorkflowVersion::query()
             ->where('WorkflowID', $workflowVersion->WorkflowID)
@@ -99,7 +99,7 @@ class WorkflowVersionService
      * We sort associative arrays recursively so harmless key order differences
      * do not create false “new versions”.
      */
-    protected function makeDefinitionHash(WorkflowVersion $workflowVersion): string
+    public function calculateDefinitionHash(WorkflowVersion $workflowVersion): string
     {
         $payload = [
             'WorkflowProfileCode' => $workflowVersion->WorkflowProfileCode,
