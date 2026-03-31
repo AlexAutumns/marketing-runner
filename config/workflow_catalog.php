@@ -109,6 +109,47 @@ return [
     ],
 
     /*
+    |--------------------------------------------------------------------------
+    | CRM MVP handoff mapping
+    |--------------------------------------------------------------------------
+    |
+    | These rules describe how workflow-emitted update instructions should be
+    | shaped when preparing a handoff package that is closer to the official
+    | CRM MVP semantics.
+    |
+    | This does not execute anything. It only gives us a stable mapping layer
+    | between the workflow-kernel bundle and the future CRM-side handling path.
+    |
+    */
+    'crm_mvp_handoff_rules' => [
+        'UPDATE_CONTACT_LEAD_SCORE' => [
+            'target_type_code' => 'SCORING_SERVICE',
+            'target_id' => 'TS_SCORING',
+            'reference_key' => 'score_rule_code',
+            'reference_label' => 'lead_scoring_rule_code',
+        ],
+
+        'UPDATE_CONTACT_LEAD_SUMMARY' => [
+            'target_type_code' => 'CRM_SERVICE',
+            'target_id' => 'CRM_CONTACT_SUMMARY',
+            'reference_key' => 'summary_code',
+            'reference_label' => 'summary_code',
+        ],
+
+        /*
+         * Forward reference only.
+         * Included so the catalog direction stays coherent as SEND_EMAIL becomes
+         * more active later.
+         */
+        'SEND_EMAIL' => [
+            'target_type_code' => 'EMAIL_SERVICE',
+            'target_id' => 'BP_EMAIL',
+            'reference_key' => 'template_key',
+            'reference_label' => 'email_template_key',
+        ],
+    ],
+
+    /*
     --------------------------------------------------------------------------
      Supported source systems
     --------------------------------------------------------------------------
