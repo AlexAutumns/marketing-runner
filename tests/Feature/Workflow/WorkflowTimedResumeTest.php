@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\WorkflowEventInbox;
+use App\Models\WorkflowStepLog;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -15,7 +16,7 @@ afterEach(function () {
     $this->travelBack();
 });
 
-it('moves the baseline workflow into waiting and sets the due timestamp from the wait config', function () {
+it('moves the baseline workflow into waiting, writes the waiting logs, and sets the due timestamp from the wait config', function () {
     $baseTime = Carbon::parse('2026-04-01 10:00:00');
     $this->travelTo($baseTime);
 
@@ -25,12 +26,23 @@ it('moves the baseline workflow into waiting and sets the due timestamp from the
         correlationKey: 'CORR_TEST_WAIT_001'
     );
 
+    $stepLogs = WorkflowStepLog::query()
+        ->where('EnrollmentID', $enrollment->EnrollmentID)
+        ->orderBy('OccurredAtUTC')
+        ->get();
+
     expect($enrollment->CurrentStepKey)->toBe('WAIT_BEFORE_STRONGER_SIGNAL')
         ->and($enrollment->EnrollmentStatusCode)->toBe('WAITING')
         ->and($enrollment->WaitingUntilUTC)->not->toBeNull()
         ->and($enrollment->WaitingUntilUTC->toDateTimeString())->toBe(
             $baseTime->copy()->addMinutes(20)->toDateTimeString()
-        );
+        )
+        ->and($stepLogs)->toHaveCount(3)
+        ->and($stepLogs[0]->StepKey)->toBe('ENROLLMENT_CREATED')
+        ->and($stepLogs[1]->StepKey)->toBe('AWAIT_INITIAL_ENGAGEMENT')
+        ->and($stepLogs[1]->StepStatusCode)->toBe('COMPLETED')
+        ->and($stepLogs[2]->StepKey)->toBe('WAIT_BEFORE_STRONGER_SIGNAL')
+        ->and($stepLogs[2]->StepStatusCode)->toBe('WAITING');
 });
 
 it('does not create due events or resume the workflow when resume-waiting is run in dry-run mode', function () {
@@ -109,7 +121,7 @@ it('rejects an invalid as-of datetime before doing any due-work inspection', fun
         ->assertExitCode(1);
 });
 
-it('resumes a due waiting workflow, processes the due event, and does not duplicate the same wait-point event on rerun', function () {
+it('resumes a due waiting workflow, processes the due event, preserves the dedupe key shape, and does not duplicate the same wait-point event on rerun', function () {
     $baseTime = Carbon::parse('2026-04-01 10:00:00');
     $this->travelTo($baseTime);
 
@@ -118,6 +130,9 @@ it('resumes a due waiting workflow, processes the due event, and does not duplic
         contactId: firstWorkflowTestContactId(),
         correlationKey: 'CORR_TEST_WAIT_004'
     );
+
+    $expectedWaitingUntil = $baseTime->copy()->addMinutes(20);
+    $expectedDedupeKey = 'WAIT_RESUME:'.$enrollment->EnrollmentID.':'.$expectedWaitingUntil->timestamp;
 
     $dueAsOf = $baseTime->copy()->addMinutes(21)->toDateTimeString();
 
@@ -137,11 +152,24 @@ it('resumes a due waiting workflow, processes the due event, and does not duplic
         ->orderBy('OccurredAtUTC')
         ->get();
 
+    $stepLogs = WorkflowStepLog::query()
+        ->where('EnrollmentID', $enrollment->EnrollmentID)
+        ->orderBy('OccurredAtUTC')
+        ->get();
+
     expect($enrollment->CurrentStepKey)->toBe('AWAIT_STRONGER_SIGNAL')
         ->and($enrollment->EnrollmentStatusCode)->toBe('ACTIVE')
         ->and($resumeEvents)->toHaveCount(1)
         ->and($resumeEvents[0]->ProcessingStatusCode)->toBe('PROCESSED')
-        ->and($resumeEvents[0]->EventSourceCode)->toBe('SYSTEM_RESUME');
+        ->and($resumeEvents[0]->EventSourceCode)->toBe('SYSTEM_RESUME')
+        ->and($resumeEvents[0]->DedupeKey)->toBe($expectedDedupeKey)
+        ->and($resumeEvents[0]->PayloadJson['resume_reason'])->toBe('WAIT_STEP_DUE')
+        ->and($resumeEvents[0]->PayloadJson['waiting_until_utc'])->toBe($expectedWaitingUntil->toDateTimeString())
+        ->and($resumeEvents[0]->PayloadJson['resume_checked_as_of_utc'])->toBe($baseTime->copy()->addMinutes(21)->toDateTimeString())
+        ->and($stepLogs)->toHaveCount(4)
+        ->and($stepLogs[3]->StepKey)->toBe('WAIT_BEFORE_STRONGER_SIGNAL')
+        ->and($stepLogs[3]->StepStatusCode)->toBe('COMPLETED')
+        ->and($stepLogs[3]->RelatedEventID)->toBe($resumeEvents[0]->EventID);
 
     $this->artisan('workflow:resume-waiting', [
         '--asOf' => $dueAsOf,
@@ -179,6 +207,38 @@ it('skips a stale waiting enrollment when the current step is no longer a wait s
         '--limit' => 50,
     ])
         ->expectsOutputToContain('current_step_not_wait_for_time')
+        ->assertExitCode(0);
+
+    $resumeEvents = WorkflowEventInbox::query()
+        ->where('WorkflowEnrollmentID', $enrollment->EnrollmentID)
+        ->where('EventTypeCode', 'WAIT_TIMER_REACHED')
+        ->count();
+
+    expect($resumeEvents)->toBe(0);
+});
+
+it('skips a waiting enrollment that no longer has a waiting-until timestamp', function () {
+    $baseTime = Carbon::parse('2026-04-01 10:00:00');
+    $this->travelTo($baseTime);
+
+    $enrollment = moveBaselineWorkflowIntoWaiting(
+        testCase: $this,
+        contactId: firstWorkflowTestContactId(),
+        correlationKey: 'CORR_TEST_WAIT_006'
+    );
+
+    $enrollment->update([
+        'EnrollmentStatusCode' => 'WAITING',
+        'WaitingUntilUTC' => null,
+    ]);
+
+    $dueAsOf = $baseTime->copy()->addMinutes(21)->toDateTimeString();
+
+    $this->artisan('workflow:resume-waiting', [
+        '--asOf' => $dueAsOf,
+        '--limit' => 50,
+    ])
+        ->expectsOutputToContain('No due waiting enrollments were found for the current resume window.')
         ->assertExitCode(0);
 
     $resumeEvents = WorkflowEventInbox::query()
