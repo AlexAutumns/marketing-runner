@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Workflow demo / handoff artifact exports
+/storage/app/workflow_demo_artifacts/
+/storage/app/workflow_demo_artifacts/*.json
