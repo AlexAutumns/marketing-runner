@@ -1,11 +1,9 @@
 <?php
 
-use App\Models\WorkflowEnrollment;
 use App\Models\WorkflowEventInbox;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 uses(RefreshDatabase::class);
 
@@ -190,33 +188,3 @@ it('skips a stale waiting enrollment when the current step is no longer a wait s
 
     expect($resumeEvents)->toBe(0);
 });
-
-function firstWorkflowTestContactId(): string
-{
-    return DB::table('contacts')->value('contact_id');
-}
-
-function moveBaselineWorkflowIntoWaiting($testCase, string $contactId, string $correlationKey): WorkflowEnrollment
-{
-    $testCase->artisan('workflow:enroll', [
-        'contactId' => $contactId,
-        'workflowId' => 'WFL_001',
-        'workflowVersionId' => 'WFLV_001',
-    ])->assertExitCode(0);
-
-    $enrollment = WorkflowEnrollment::query()->firstOrFail();
-
-    $testCase->artisan('workflow:event', [
-        'eventType' => 'EMAIL_LINK_CLICKED',
-        'contactId' => $contactId,
-        '--workflowId' => 'WFL_001',
-        '--workflowVersionId' => 'WFLV_001',
-        '--enrollmentId' => $enrollment->EnrollmentID,
-        '--source' => 'EMAIL_TRACKING',
-        '--correlationKey' => $correlationKey,
-    ])->assertExitCode(0);
-
-    $testCase->artisan('workflow:process')->assertExitCode(0);
-
-    return $enrollment->refresh();
-}

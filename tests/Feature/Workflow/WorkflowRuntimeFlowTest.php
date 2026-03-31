@@ -6,7 +6,6 @@ use App\Models\WorkflowEventInbox;
 use App\Models\WorkflowStepLog;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 
 uses(RefreshDatabase::class);
 
@@ -120,7 +119,7 @@ it('processes an email click event, completes the workflow, preserves correlatio
         ->and($queuedActions[1]->PayloadJson['summary_code'] ?? null)->toBe('EMAIL_CLICKED');
 });
 
-it('ignores an email click event from the wrong source and queues no actions', function () {
+it('ignores an email click event from the wrong source, writes an ignored step log, and queues no actions', function () {
     $contactId = firstWorkflowTestContactId();
     $enrollment = enrollEmailFirstWorkflow($this, $contactId);
 
@@ -147,13 +146,17 @@ it('ignores an email click event from the wrong source and queues no actions', f
 
     $stepLogs = WorkflowStepLog::query()
         ->where('EnrollmentID', $enrollment->EnrollmentID)
+        ->orderBy('OccurredAtUTC')
         ->get();
 
     expect($event->ProcessingStatusCode)->toBe('IGNORED')
         ->and($enrollment->CurrentStepKey)->toBe('AWAIT_EMAIL_SIGNAL')
         ->and($enrollment->EnrollmentStatusCode)->toBe('ACTIVE')
         ->and($queuedActions)->toHaveCount(0)
-        ->and($stepLogs)->toHaveCount(1);
+        ->and($stepLogs)->toHaveCount(2)
+        ->and($stepLogs[1]->StepKey)->toBe('AWAIT_EMAIL_SIGNAL')
+        ->and($stepLogs[1]->StepStatusCode)->toBe('IGNORED')
+        ->and($stepLogs[1]->RelatedEventID)->toBe($event->EventID);
 });
 
 it('ignores an email click event when the category is not accepted by the current step conditions', function () {
@@ -182,25 +185,16 @@ it('ignores an email click event when the category is not accepted by the curren
         ->where('EnrollmentID', $enrollment->EnrollmentID)
         ->get();
 
+    $stepLogs = WorkflowStepLog::query()
+        ->where('EnrollmentID', $enrollment->EnrollmentID)
+        ->orderBy('OccurredAtUTC')
+        ->get();
+
     expect($event->ProcessingStatusCode)->toBe('IGNORED')
         ->and($event->EventCategoryCode)->toBe('CAMPAIGN_CONTEXT')
         ->and($enrollment->CurrentStepKey)->toBe('AWAIT_EMAIL_SIGNAL')
         ->and($enrollment->EnrollmentStatusCode)->toBe('ACTIVE')
-        ->and($queuedActions)->toHaveCount(0);
+        ->and($queuedActions)->toHaveCount(0)
+        ->and($stepLogs)->toHaveCount(2)
+        ->and($stepLogs[1]->StepStatusCode)->toBe('IGNORED');
 });
-
-function firstWorkflowTestContactId(): string
-{
-    return DB::table('contacts')->value('contact_id');
-}
-
-function enrollEmailFirstWorkflow($testCase, string $contactId): WorkflowEnrollment
-{
-    $testCase->artisan('workflow:enroll', [
-        'contactId' => $contactId,
-        'workflowId' => 'WFL_001',
-        'workflowVersionId' => 'WFLV_002',
-    ])->assertExitCode(0);
-
-    return WorkflowEnrollment::query()->firstOrFail();
-}

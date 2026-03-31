@@ -1,29 +1,26 @@
 <?php
 
+use App\Models\WorkflowEnrollment;
+use Illuminate\Support\Facades\DB;
+
 /*
 |--------------------------------------------------------------------------
 | Test Case
 |--------------------------------------------------------------------------
 |
-| The closure you provide to your test functions is always bound to a specific PHPUnit test
-| case class. By default, that class is "PHPUnit\Framework\TestCase". Of course, you may
-| need to change it using the "pest()" function to bind a different classes or traits.
+| Workflow tests live under tests/Feature/Workflow and use the application
+| container through Tests\TestCase. Pest stays concise, but the structure
+| remains deliberate and suite-friendly.
 |
 */
 
 pest()->extend(Tests\TestCase::class)
- // ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)
     ->in('Feature');
 
 /*
 |--------------------------------------------------------------------------
 | Expectations
 |--------------------------------------------------------------------------
-|
-| When you're writing tests, you often need to check that values meet certain conditions. The
-| "expect()" function gives you access to a set of "expectations" methods that you can use
-| to assert different things. Of course, you may extend the Expectation API at any time.
-|
 */
 
 expect()->extend('toBeOne', function () {
@@ -32,16 +29,84 @@ expect()->extend('toBeOne', function () {
 
 /*
 |--------------------------------------------------------------------------
-| Functions
+| Shared workflow test helpers
 |--------------------------------------------------------------------------
 |
-| While Pest is very powerful out-of-the-box, you may have some testing code specific to your
-| project that you don't want to repeat in every file. Here you can also expose helpers as
-| global functions to help you to reduce the number of lines of code in your test files.
+| These helpers are centralized here so workflow test files do not redeclare
+| the same functions repeatedly. This keeps the suite cleaner and prevents
+| fatal redeclaration errors.
 |
 */
 
-function something()
+function firstWorkflowTestContactId(): string
 {
-    // ..
+    return DB::table('contacts')->value('contact_id');
+}
+
+function enrollEmailFirstWorkflow($testCase, string $contactId): WorkflowEnrollment
+{
+    $testCase->artisan('workflow:enroll', [
+        'contactId' => $contactId,
+        'workflowId' => 'WFL_001',
+        'workflowVersionId' => 'WFLV_002',
+    ])->assertExitCode(0);
+
+    return WorkflowEnrollment::query()->firstOrFail();
+}
+
+function moveBaselineWorkflowIntoWaiting($testCase, string $contactId, string $correlationKey): WorkflowEnrollment
+{
+    $testCase->artisan('workflow:enroll', [
+        'contactId' => $contactId,
+        'workflowId' => 'WFL_001',
+        'workflowVersionId' => 'WFLV_001',
+    ])->assertExitCode(0);
+
+    $enrollment = WorkflowEnrollment::query()->firstOrFail();
+
+    $testCase->artisan('workflow:event', [
+        'eventType' => 'EMAIL_LINK_CLICKED',
+        'contactId' => $contactId,
+        '--workflowId' => 'WFL_001',
+        '--workflowVersionId' => 'WFLV_001',
+        '--enrollmentId' => $enrollment->EnrollmentID,
+        '--source' => 'EMAIL_TRACKING',
+        '--correlationKey' => $correlationKey,
+    ])->assertExitCode(0);
+
+    $testCase->artisan('workflow:process')->assertExitCode(0);
+
+    return $enrollment->refresh();
+}
+
+function prepareQueuedActionContext($testCase): array
+{
+    $contactId = firstWorkflowTestContactId();
+
+    $testCase->artisan('workflow:enroll', [
+        'contactId' => $contactId,
+        'workflowId' => 'WFL_001',
+        'workflowVersionId' => 'WFLV_002',
+    ])->assertExitCode(0);
+
+    $enrollment = WorkflowEnrollment::query()->firstOrFail();
+    $correlationKey = 'CORR_TEST_EXPORT_001';
+
+    $testCase->artisan('workflow:event', [
+        'eventType' => 'EMAIL_LINK_CLICKED',
+        'contactId' => $contactId,
+        '--workflowId' => 'WFL_001',
+        '--workflowVersionId' => 'WFLV_002',
+        '--enrollmentId' => $enrollment->EnrollmentID,
+        '--source' => 'EMAIL_TRACKING',
+        '--correlationKey' => $correlationKey,
+    ])->assertExitCode(0);
+
+    $testCase->artisan('workflow:process')->assertExitCode(0);
+
+    return [
+        'contact_id' => $contactId,
+        'enrollment_id' => $enrollment->EnrollmentID,
+        'correlation_key' => $correlationKey,
+    ];
 }

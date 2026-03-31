@@ -1,9 +1,7 @@
 <?php
 
-use App\Models\WorkflowEnrollment;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 
 uses(RefreshDatabase::class);
@@ -16,7 +14,7 @@ afterEach(function () {
     File::deleteDirectory(storage_path('app/workflow_demo_artifacts'));
 });
 
-it('previews the bundle consume path for a real queued action bundle and shows both local and crm handoff sections', function () {
+it('previews the bundle consume path for a real queued action bundle and shows meaningful handoff values', function () {
     $context = prepareQueuedActionContext($this);
 
     $this->artisan('workflow:preview-bundle-consume-path', [
@@ -25,9 +23,11 @@ it('previews the bundle consume path for a real queued action bundle and shows b
     ])
         ->expectsOutputToContain('BUNDLE CONSUME PATH')
         ->expectsOutputToContain('local_demo_application')
-        ->expectsOutputToContain('crm_mvp_handoff')
+        ->expectsOutputToContain('CRM_MVP_WORKFLOW_HANDOFF')
         ->expectsOutputToContain('SCORING_SERVICE')
         ->expectsOutputToContain('CRM_CONTACT_SUMMARY')
+        ->expectsOutputToContain('EMAIL_CLICK')
+        ->expectsOutputToContain('EMAIL_CLICKED')
         ->assertExitCode(0);
 });
 
@@ -112,35 +112,3 @@ it('handles the no-actions-found export case safely without creating the artifac
 
     expect(File::exists($directory))->toBeFalse();
 });
-
-function prepareQueuedActionContext($testCase): array
-{
-    $contactId = DB::table('contacts')->value('contact_id');
-
-    $testCase->artisan('workflow:enroll', [
-        'contactId' => $contactId,
-        'workflowId' => 'WFL_001',
-        'workflowVersionId' => 'WFLV_002',
-    ])->assertExitCode(0);
-
-    $enrollment = WorkflowEnrollment::query()->firstOrFail();
-    $correlationKey = 'CORR_TEST_EXPORT_001';
-
-    $testCase->artisan('workflow:event', [
-        'eventType' => 'EMAIL_LINK_CLICKED',
-        'contactId' => $contactId,
-        '--workflowId' => 'WFL_001',
-        '--workflowVersionId' => 'WFLV_002',
-        '--enrollmentId' => $enrollment->EnrollmentID,
-        '--source' => 'EMAIL_TRACKING',
-        '--correlationKey' => $correlationKey,
-    ])->assertExitCode(0);
-
-    $testCase->artisan('workflow:process')->assertExitCode(0);
-
-    return [
-        'contact_id' => $contactId,
-        'enrollment_id' => $enrollment->EnrollmentID,
-        'correlation_key' => $correlationKey,
-    ];
-}
