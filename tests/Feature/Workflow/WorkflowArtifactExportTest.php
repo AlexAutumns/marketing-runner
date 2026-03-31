@@ -14,7 +14,7 @@ afterEach(function () {
     File::deleteDirectory(storage_path('app/workflow_demo_artifacts'));
 });
 
-it('previews the bundle consume path for a real queued action bundle and shows meaningful handoff values', function () {
+it('previews the bundle consume path for a real queued action bundle and shows stable meaningful values', function () {
     $context = prepareQueuedActionContext($this);
 
     $this->artisan('workflow:preview-bundle-consume-path', [
@@ -22,8 +22,8 @@ it('previews the bundle consume path for a real queued action bundle and shows m
         '--correlationKey' => $context['correlation_key'],
     ])
         ->expectsOutputToContain('BUNDLE CONSUME PATH')
+        ->expectsOutputToContain('consume_path_version')
         ->expectsOutputToContain('local_demo_application')
-        ->expectsOutputToContain('CRM_MVP_WORKFLOW_HANDOFF')
         ->expectsOutputToContain('SCORING_SERVICE')
         ->expectsOutputToContain('CRM_CONTACT_SUMMARY')
         ->expectsOutputToContain('EMAIL_CLICK')
@@ -67,7 +67,8 @@ it('exports bundle artifacts with correct content in bundle, consume path, servi
         ->and($bundle['subject']['subject_id'])->toBe($context['contact_id'])
         ->and($bundle['instructions'])->toHaveCount(2);
 
-    expect($consumePath['local_demo_application']['score_updates'])->toBe(['EMAIL_CLICK'])
+    expect($consumePath['consume_path_version'])->toBe(1)
+        ->and($consumePath['local_demo_application']['score_updates'])->toBe(['EMAIL_CLICK'])
         ->and($consumePath['local_demo_application']['summary_updates'])->toBe(['EMAIL_CLICKED'])
         ->and($consumePath['crm_mvp_handoff']['handoff_type'])->toBe('CRM_MVP_WORKFLOW_HANDOFF')
         ->and($consumePath['crm_mvp_handoff']['service_actions'])->toHaveCount(2);
@@ -87,8 +88,12 @@ it('exports bundle artifacts with correct content in bundle, consume path, servi
     $scoringPacket = collect($servicePackets)->firstWhere('target_id', 'TS_SCORING');
     $crmPacket = collect($servicePackets)->firstWhere('target_id', 'CRM_CONTACT_SUMMARY');
 
-    expect($scoringPacket['actions'][0]['instruction_type'])->toBe('UPDATE_CONTACT_LEAD_SCORE')
+    expect($scoringPacket['workflow_context']['correlation_key'])->toBe($context['correlation_key'])
+        ->and($scoringPacket['subject']['subject_id'])->toBe($context['contact_id'])
+        ->and($scoringPacket['actions'][0]['instruction_type'])->toBe('UPDATE_CONTACT_LEAD_SCORE')
         ->and($scoringPacket['actions'][0]['payload']['score_rule_code'])->toBe('EMAIL_CLICK')
+        ->and($crmPacket['workflow_context']['correlation_key'])->toBe($context['correlation_key'])
+        ->and($crmPacket['subject']['subject_id'])->toBe($context['contact_id'])
         ->and($crmPacket['actions'][0]['instruction_type'])->toBe('UPDATE_CONTACT_LEAD_SUMMARY')
         ->and($crmPacket['actions'][0]['payload']['summary_code'])->toBe('EMAIL_CLICKED');
 
